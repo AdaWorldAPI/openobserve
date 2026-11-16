@@ -1,15 +1,9 @@
 name: Security audit
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  # Advisories only matter when the dependency set changes, so PR runs are path-filtered to the
-  # Cargo manifests; the weekly run catches advisories published against unchanged deps.
-  pull_request:
-    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, converted_to_draft]
-    paths:
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - ".github/workflows/audit-checker.yml"
-  schedule:
-    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:

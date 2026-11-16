@@ -2,11 +2,11 @@ name: AI Code Review
 
 # This file and the engine always run from main; the PR head in ./pr is data only and is never installed, built or run.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  pull_request_target:
-    branches: [main]
-    # unlabeled and converted_to_draft never review: their run exists only to cancel the one in progress (see concurrency).
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
       pr_number:

@@ -1,10 +1,10 @@
 name: Playwright Bug-Fix Regression Tests
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  schedule:
-    # Twice a day, bracketing the IST workday: 11:00 PM IST (17:30 UTC) and 5:00 AM IST (23:30 UTC).
-    - cron: '30 17 * * *'  # 11:00 PM IST
-    - cron: '30 23 * * *'  # 5:00 AM IST
   workflow_dispatch:
 
 concurrency:

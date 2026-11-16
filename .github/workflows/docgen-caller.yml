@@ -21,13 +21,11 @@ name: DocGen Caller (openobserve)
 #   NOTE: "Actions" (run triggering) is a DIFFERENT permission from "Workflows" (file editing).
 # KILL SWITCH: the engine honors the DOCGEN_DISABLED variable.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  issue_comment:
-    types: [created]
-  # AUTO-TRIGGER (opt-in): when an OSS PR MERGES, dispatch DocGen automatically — but only if
-  # vars.DOCGEN_AUTO_TRIGGER == 'true'. Gated in the job `if:` to merged + feat: + same-repo branch.
-  pull_request:
-    types: [closed]
   workflow_dispatch:
     inputs:
       pr_number:

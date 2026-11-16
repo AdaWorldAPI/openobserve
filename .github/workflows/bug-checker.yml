@@ -1,9 +1,11 @@
 name: Bug Checker Agent
 
 # Checks open bugs to verify if fixes exist in codebase (using Claude)
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  schedule:
-    - cron: "0 9 * * 1" # Every Monday at 9 AM UTC
   workflow_dispatch:
     inputs:
       dry_run:

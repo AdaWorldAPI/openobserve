@@ -8,35 +8,11 @@ name: Update Translations
 # Keeping the work in the originating PR means the author who added the English
 # strings also owns (and reviews) their translations, and main is never missing
 # translations for a string that has already landed.
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  pull_request:
-    # Deliberately NOT the bare default opened/synchronize/reopened. Generating
-    # on every push meant every edit to en-US.json produced its own translation
-    # commit, and each of those commits re-ran the PR's entire check suite
-    # (playwright, unit-tests, api-testing, …) — on top of the merge queue
-    # running them all again at merge time. auto_merge_enabled/ready_for_review
-    # fire once, at the point the author signals the PR is finished, so the
-    # translation commit costs one extra CI cycle per PR instead of one per edit.
-    #
-    # `synchronize` is included too, but the job-level `if` below only acts on
-    # it once auto-merge is already enabled. Without that, a push to en-US.json
-    # *after* enabling auto-merge (e.g. addressing review comments) retriggers
-    # nothing here — the PR can then reach the merge queue with strings that
-    # were never sent for translation, which verify-translations.yml can only
-    # reject, not fix, because a queued branch is frozen. Gating on auto_merge
-    # keeps the common case (pushes before auto-merge is on) free.
-    #
-    # `merge_group` cannot be used for this, which is the obvious thing to reach
-    # for: merge-queue branches (gh-readonly-queue/*) are read-only and their
-    # commits are frozen — the whole point of a queue is that what is tested is
-    # what merges — so a merge_group run has nowhere to put the commit. The
-    # queue is gated by verify-translations.yml instead, which only *checks*.
-    #
-    # `paths` still applies: a PR that never touches en-US.json creates no run.
-    types: [auto_merge_enabled, ready_for_review, synchronize]
-    paths:
-      - 'web/src/locales/languages/en-US.json'
-      - 'web/src/locales/languages/security/en-US.json'
   workflow_dispatch:
     inputs:
       languages:

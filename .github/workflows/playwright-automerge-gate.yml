@@ -1,10 +1,12 @@
 name: Playwright auto-merge gate
 
 # The full-matrix run queues behind any in-flight smoke run, so a pending playwright_summary stops its green summary letting auto-merge enqueue.
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  pull_request:
-    # No auto_merge_disabled: check runs can't be deleted, and any completed placeholder would pass; the queued full run completes it.
-    types: [auto_merge_enabled, labeled]
+  workflow_dispatch:
 
 concurrency:
   group: playwright-automerge-gate-${{ github.event.pull_request.number }}
