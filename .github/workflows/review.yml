@@ -1,11 +1,12 @@
 name: PR Review
 
 # Trigger on comments containing @review on PRs or issues
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  issue_comment:
-    types: [created]
-  pull_request_review_comment:
-    types: [created]
+  workflow_dispatch:
 
 concurrency:
   group: review-${{ github.event.issue.number || github.event.pull_request.number }}

@@ -10,12 +10,11 @@ name: Playwright e2e Stuck-Run-Reaper
 # specific to the case, so a cancellation is never misread as a blocked runner.
 # A separate job re-runs merge-queue checks GitHub ignores for a completed_at older than their run.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  schedule:
-    # Every 15 minutes. Worst-case a stuck job lives ~threshold + 15m.
-    - cron: "*/15 * * * *"
-    # Every 10 minutes for the merge-queue unstick job.
-    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:

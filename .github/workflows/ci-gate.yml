@@ -2,12 +2,12 @@ name: CI gate
 
 # Required check on main: pending without the ready-for-ci label, so an untested PR cannot be queued.
 # A status is needed because skipped jobs count as passing for required checks.
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  # pull_request_target so fork PRs get a status too; no checkout, so nothing untrusted runs.
-  pull_request_target:
-    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, converted_to_draft]
-  # The queue commit must carry every required check; the gate is already passed by then.
-  merge_group:
+  workflow_dispatch:
 
 permissions:
   statuses: write

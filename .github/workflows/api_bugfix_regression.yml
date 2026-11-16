@@ -2,11 +2,11 @@ name: API Bug-Fix Regression Tests
 
 # Bug-fix API tests (tests/regression/) run only here, never on a PR; shards come from tests/api-testing/ci-matrix/ci_matrix_api_regression.json.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  schedule:
-    # Offset 1h from the Playwright regression crons so the two do not contend for runners.
-    - cron: '30 18 * * *'  # 12:00 AM IST
-    - cron: '30 0 * * *'   # 6:00 AM IST
   workflow_dispatch:
 
 concurrency:

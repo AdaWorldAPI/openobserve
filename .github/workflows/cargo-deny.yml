@@ -1,16 +1,9 @@
 name: "Licenses checker"
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  # Licences only change with the dependency set: labelled, non-draft PRs that touch the Cargo manifests,
-  # plus a weekly run for advisories against unchanged dependencies. No post-merge rerun.
-  pull_request:
-    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, converted_to_draft]
-    paths:
-      - "**/Cargo.lock"
-      - "**/Cargo.toml"
-      - "deny.toml"
-      - ".github/workflows/cargo-deny.yml"
-  schedule:
-    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 concurrency:

@@ -9,11 +9,12 @@ name: Sister Enterprise Merge Gate
 #
 # REQUIRED — secrets.ORG_ADMIN_TOKEN: o2-enterprise Pull requests: read.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  # pull_request_target: the base copy of this file runs, and no PR code is checked out.
-  pull_request_target:
-    types: [opened, reopened, synchronize, labeled, auto_merge_enabled]
-  merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: sister-ent-merge-gate-${{ github.event.pull_request.number || github.ref }}

@@ -30,11 +30,11 @@ name: autoe2e Branch Reaper
 # E2E_COUNCIL_DISABLED. A reaper that ships disarmed behind a variable nobody remembers to set is a
 # reaper that never runs.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  schedule:
-    - cron: "30 2 * * *" # daily, off-peak
-  pull_request:
-    types: [closed]
   workflow_dispatch:
     inputs:
       dry_run:

@@ -6,11 +6,12 @@
 # files are checked, so edits to existing UI specs never trip it.
 name: Pure-API Spec Guard
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  pull_request:
-    paths:
-      - "tests/ui-testing/playwright-tests/**/*.spec.js"
-      - "tests/ui-testing/scripts/classify-specs.js"
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -1,13 +1,11 @@
 name: initiate_enterprise_build
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  pull_request:
-    branches:
-      - "**"
-    types: [synchronize, labeled, ready_for_review, converted_to_draft]
-  # Runs when ready-for-ci is added and when the PR is approved; pushes run only while the approval stands.
-  pull_request_review:
-    types: [submitted]
+  workflow_dispatch:
 
 concurrency:
   # A non-approval review or an unrelated label does nothing, so it must not cancel a running dispatch.

@@ -1,16 +1,11 @@
 name: Database Validation Tests
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  # Kept as the Rust cache writer on main: caches saved from merge-queue refs are never restored by PRs.
-  push:
-    branches:
-      - "main"
-  pull_request:
-    branches:
-      - "**"
-    # labeled/unlabeled so 'ready-for-ci' gates CI; only a new commit cancels an in-flight run (see concurrency); a draft starts no paid CI (an in-flight run still finishes).
-    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, converted_to_draft]
-  merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}

@@ -30,12 +30,12 @@ name: Playwright E2E Crosscheck
 #                             only override to test the engine itself from a branch).
 #   vars.ENT_E2E_GATE_DISABLED — 'true' kill switch: gate passes without dispatching.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  # Opens, reopens, pushes, base changes and the gate's own labels run it; any other label or edit only mirrors its current result.
-  pull_request:
-    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review, converted_to_draft]
-  # A required check must also report on merge-queue commits; the gate already passed on the PR head.
-  merge_group:
+  workflow_dispatch:
 
 # PR-scoped: a new push or gate label supersedes the previous gate attempt for the same PR.
 concurrency:

@@ -28,9 +28,11 @@
 # =============================================================================================
 name: Mobile RUM SDK E2E
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  repository_dispatch:
-    types: [mobile-sdk-release]
   workflow_dispatch:
     inputs:
       run_full_suite:
@@ -51,23 +53,6 @@ on:
         description: "SDK version to test (used with 'sdk' above)"
         type: string
         default: ""
-  pull_request:
-    # `labeled` so adding the 'mobile-e2e' label re-fires the run and turns the device jobs on
-    # (lets you validate the full Android + iOS suite on a PR before merging).
-    types: [opened, reopened, synchronize, labeled, ready_for_review, converted_to_draft]
-    paths:
-      - "tests/mobile-testing/**"
-      - ".github/workflows/mobile-sdk-e2e.yml"
-      # Mobile-RUM product code: re-run the suite whenever the RUM pipeline, dashboard,
-      # or the in-app SDK install docs (version pins) change.
-      - "web/src/views/RUM/**"
-      - "web/src/composables/rum/**"
-      - "web/src/components/ingestion/setupCard/content/rumReactNative.ts"
-      - "web/src/components/ingestion/setupCard/content/rumAndroid.ts"
-      - "web/src/components/ingestion/setupCard/content/rumIOS.ts"
-      - "src/**/rum/**"
-  # schedule:
-  #   - cron: "0 2 * * 1" # Mondays 02:00 UTC — weekly safety net
 
 concurrency:
   # PR pushes supersede each other (share the PR-number group); every non-PR run (each SDK-release

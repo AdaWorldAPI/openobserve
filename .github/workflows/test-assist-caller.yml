@@ -22,9 +22,11 @@ name: Test-Assist Caller (openobserve)
 #   This PAT also posts THIS caller's own "started" ack as the human (not github-actions[bot]).
 # KILL SWITCH: the engine honors the TEST_ASSIST_DISABLED variable.
 
+# Manual-only: GitHub-hosted runner minutes are capped (the account's
+# included minutes are used up), so this workflow no longer starts on push,
+# pull_request or a schedule. Run it from the Actions tab when needed, and run
+# the same checks locally before pushing.
 on:
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       issue_number:
