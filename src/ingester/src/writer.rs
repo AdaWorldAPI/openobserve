@@ -839,6 +839,64 @@ mod tests {
             .unwrap();
     }
 
+    /// What reaches the memtable through the write path reaches the shadow copy, row for row.
+    #[cfg(feature = "substrate")]
+    #[tokio::test]
+    async fn test_written_batches_are_mirrored_into_the_substrate() {
+        use arrow::{array::Int64Array, record_batch::RecordBatch};
+        use arrow_schema::{DataType, Field};
+
+        let (org, stream) = ("substrate_shadow_org", "substrate_shadow_stream");
+        let key = o2_substrate::StreamKey::new(org, "logs", stream);
+        assert_eq!(o2_substrate::stats(&key).rows, 0);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(config::TIMESTAMP_COL_NAME, DataType::Int64, false),
+            Field::new("status", DataType::Int64, false),
+        ]));
+        let writer = get_writer(0, org, "logs", stream).await;
+        for (ts, status) in [(vec![100, 200], vec![200, 404]), (vec![300], vec![404])] {
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int64Array::from(ts)),
+                    Arc::new(Int64Array::from(status)),
+                ],
+            )
+            .unwrap();
+            let entry = Entry {
+                org_id: org.into(),
+                stream: stream.into(),
+                schema: Some(schema.clone()),
+                schema_key: "hash_a".into(),
+                partition_key: "2026/10/15/00".into(),
+                data_size: 10,
+                batch: Some(batch),
+                ..Entry::new()
+            };
+            writer.write_batch_synced(vec![entry]).await.unwrap();
+        }
+
+        let shadow = o2_substrate::stats(&key);
+        assert_eq!(
+            (shadow.tables, shadow.rows, shadow.refused_batches),
+            (2, 3, 0)
+        );
+        let not_found = o2_substrate::fold(&key, 0, |acc, table| {
+            Ok(acc + table.count(table.eq_int("status", 404)?)?)
+        });
+        assert_eq!(not_found, Ok(2));
+
+        let memtable = writer.memtable.read().await;
+        let (_, batches) = memtable.read(org, stream, None, &[]).unwrap();
+        let memtable_rows: usize = batches.iter().map(|b| b.data.num_rows()).sum();
+        assert_eq!(memtable_rows, shadow.rows);
+        drop(memtable);
+
+        WRITERS[writer.idx].write().await.remove(&writer.key);
+        let _ = std::fs::remove_file(writer.wal.read().await.path());
+    }
+
     #[tokio::test]
     async fn test_wal_min_ts_covers_memtable_and_immutable() {
         let (org, stream) = ("wal_min_ts_org", "wal_min_ts_stream");
