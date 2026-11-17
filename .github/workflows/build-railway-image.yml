@@ -6,23 +6,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    # A change that cannot alter the image must not restart a 60-90 minute build.
-    paths-ignore:
-      - "tests/**"
-      - "docs/**"
-      - "**.md"
-      - ".github/**"
-      - ".claude/**"
-      - ".agents/**"
 
 permissions:
   contents: read
   packages: write
-
-# A running build is never cancelled: a newer push waits, and only the newest waiting one is kept.
-concurrency:
-  group: build-railway-image
-  cancel-in-progress: false
 
 jobs:
   image:
@@ -50,8 +37,16 @@ jobs:
           context: .
           file: deploy/build/Dockerfile.railway
           push: true
-          tags: |
-            ghcr.io/adaworldapi/openobserve:latest
-            ghcr.io/adaworldapi/openobserve:${{ github.sha }}
+          tags: ghcr.io/adaworldapi/openobserve:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=min
+
+      # Builds run in parallel, so an older one can finish last: only main's head becomes latest.
+      - name: Tag latest if this commit is still the head of main
+        run: |
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$head" = "${{ github.sha }}" ]; then
+            docker buildx imagetools create -t ghcr.io/adaworldapi/openobserve:latest ghcr.io/adaworldapi/openobserve:${{ github.sha }}
+          else
+            echo "main moved to $head; latest is left to that build"
+          fi
