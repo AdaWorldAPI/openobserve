@@ -889,11 +889,7 @@ mod tests {
 
         let memtable = writer.memtable.read().await;
         let (_, batches) = memtable.read(org, stream, None, &[]).unwrap();
-        let memtable_rows: usize = batches
-            .iter()
-            .flat_map(|(_, entries)| entries)
-            .map(|entry| entry.data.num_rows())
-            .sum();
+        let memtable_rows: usize = batches.iter().map(|b| b.data.num_rows()).sum();
         assert_eq!(memtable_rows, shadow.rows);
         drop(memtable);
 
