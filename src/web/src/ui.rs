@@ -22,7 +22,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use rust_embed_for_web::EmbedableFile;
 
 use crate::WebAssets;
 
@@ -57,9 +56,8 @@ fn serve_file(path: &str) -> Response {
     }
 
     match WebAssets::get(file_path) {
-        Some(content) => {
+        Some(data) => {
             let mime = mime_guess::from_path(file_path).first_or_octet_stream();
-            let data = content.data();
 
             // Vite emits content-hashed filenames under assets/ and monacoeditorwork/,
             // so those URLs are safe to cache forever. index.html must revalidate so
@@ -78,7 +76,7 @@ fn serve_file(path: &str) -> Response {
                 .header(header::CONTENT_TYPE, mime.as_ref())
                 .header(header::CACHE_CONTROL, cache_control)
                 .header("X-Content-Type-Options", "nosniff")
-                .body(Body::from(data.to_vec()))
+                .body(Body::from(data))
                 .unwrap()
         }
         None => Response::builder()
