@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""Side-by-side parity probe for an OpenObserve HTTP endpoint.
-
-capture: ingest a deterministic fixture into one instance, run a fixed query set,
-         write the normalized answers as JSON.
-diff:    compare two captures query by query.
-Timestamps are stored relative to the fixture base, so two captures taken at
-different times compare equal when the engine answers the same.
-"""
 import argparse, base64, datetime, json, sys, time, urllib.request
 
 ORG = "default"

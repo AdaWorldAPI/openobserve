@@ -2,7 +2,7 @@
 # Control pair for o2_parity.py: the same binary twice must agree; a mutated fixture must differ.
 # Usage: control.sh <openobserve binary> <empty work dir>
 set -u
-BIN=$1; W=$2; HERE=$(cd "$(dirname "$0")" && pwd)
+BIN=$(realpath "$1"); mkdir -p "$2"; W=$(realpath "$2"); HERE=$(cd "$(dirname "$0")" && pwd)
 C="--user parity@example.com --password Parity-Lab-123456"
 PIDS=()
 start() {
