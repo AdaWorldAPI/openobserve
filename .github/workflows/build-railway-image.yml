@@ -6,6 +6,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # A change that cannot alter the image must not restart a 60-90 minute build.
+    paths-ignore:
+      - "tests/**"
+      - "docs/**"
+      - "**.md"
+      - ".github/**"
+      - ".claude/**"
+      - ".agents/**"
 
 permissions:
   contents: read
