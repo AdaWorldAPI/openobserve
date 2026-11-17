@@ -10,7 +10,7 @@ RUN NODE_OPTIONS="--max-old-space-size=8192" npm run build
 
 FROM public.ecr.aws/docker/library/rust:1-trixie AS builder
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends protobuf-compiler cmake && \
+    apt-get install -y --no-install-recommends protobuf-compiler cmake clang libclang-dev && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /openobserve
 COPY . /openobserve
