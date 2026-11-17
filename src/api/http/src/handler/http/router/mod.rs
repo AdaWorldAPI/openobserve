@@ -43,6 +43,8 @@ use openobserve_api_ingest::request::{clusters, datadog, logs, metrics, profiles
 use openobserve_api_management::request::org_domains;
 #[cfg(feature = "cpu-profiling")]
 use openobserve_api_management::request::profiling;
+#[cfg(feature = "zitadel")]
+use openobserve_api_management::request::zitadel;
 use openobserve_api_management::request::{
     alerts, announcements, authz, dashboards, db_monitoring, downtimes, folders, gen_ai_health,
     ingest_rejections, kv, metrics_usage, model_pricing, organization, public_dashboards,
@@ -1221,12 +1223,19 @@ fn workflow_hook_routes() -> Router {
 /// payload — the full config lives at the authenticated `/api/{org_id}/config`.
 #[cfg(not(feature = "enterprise"))]
 pub fn config_routes() -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/reload", get(status::config_reload))
         .route_layer(middleware::from_fn(password_policy_middleware))
         .route_layer(middleware::from_fn(auth_middleware))
         .route("/", get(status::zo_config_bootstrap))
-        .route("/logout", get(status::logout))
+        .route("/logout", get(status::logout));
+    // Added after the route layers, so these stay outside the auth layer like the enterprise ones.
+    #[cfg(feature = "zitadel")]
+    let router = router
+        .route("/redirect", get(zitadel::redirect))
+        .route("/dex_login", get(zitadel::login))
+        .route("/dex_refresh", get(zitadel::refresh));
+    router
 }
 
 #[cfg(feature = "enterprise")]

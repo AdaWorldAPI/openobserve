@@ -24,6 +24,11 @@ enterprise = [
     "search_service/enterprise",
     "stream/enterprise",
 ]
+zitadel = [
+    "openobserve-api-common/zitadel",
+    "openobserve-api-management/zitadel",
+    "openobserve-core/zitadel",
+]
 cloud = [
     "enterprise",
     "o2_enterprise/cloud",

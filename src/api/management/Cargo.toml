@@ -27,6 +27,11 @@ enterprise = [
     "stream/enterprise",
     "usage_reporting/enterprise",
 ]
+zitadel = [
+    "dep:o2_zitadel",
+    "openobserve-api-common/zitadel",
+    "openobserve-core/zitadel",
+]
 cloud = [
     "enterprise",
     "o2_enterprise/cloud",
@@ -72,6 +77,7 @@ mime.workspace = true
 o2_dex = { workspace = true, optional = true }
 o2_enterprise = { workspace = true, optional = true, default-features = false }
 o2_openfga = { workspace = true, optional = true }
+o2_zitadel = { workspace = true, optional = true }
 openobserve-builtins.workspace = true
 openobserve-cipher = { workspace = true, optional = true }
 openobserve-core.workspace = true

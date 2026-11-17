@@ -517,7 +517,13 @@ where
             let auth_tokens: AuthTokens =
                 json::from_str(std::str::from_utf8(&val).unwrap_or_default()).unwrap_or_default();
             let access_token = auth_tokens.access_token;
-            if access_token.starts_with("Basic") || access_token.starts_with("Bearer") {
+            #[cfg(feature = "zitadel")]
+            let zitadel_auth = zitadel_session_auth(&access_token).await;
+            #[cfg(not(feature = "zitadel"))]
+            let zitadel_auth: Option<String> = None;
+            if let Some(auth) = zitadel_auth {
+                auth
+            } else if access_token.starts_with("Basic") || access_token.starts_with("Bearer") {
                 access_token
             } else {
                 format!("Bearer {access_token}")
@@ -559,6 +565,17 @@ fn password_hash_cache_key(pass: &str, salt: &str) -> String {
     hasher.update([0u8]);
     hasher.update(pass.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+// Only a live session holding a `Zitadel ` value is marked; any other stored token never is.
+#[cfg(feature = "zitadel")]
+async fn zitadel_session_auth(access_token: &str) -> Option<String> {
+    if !o2_zitadel::active() {
+        return None;
+    }
+    let session_id = access_token.strip_prefix("session ")?;
+    let stored = crate::db::session::get(session_id).await.ok()?;
+    o2_zitadel::session_auth(SESSION_AUTH_MARKER, session_id, &stored)
 }
 
 // Only server-side session resolution may emit the marker; from a client it is a forged trust

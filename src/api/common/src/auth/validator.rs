@@ -451,6 +451,79 @@ async fn fleet_token_response_with(
     }
 }
 
+/// The account `user_id` names for this request: its membership in the path's org, its `_meta`
+/// entry for the org list, or a minimal record on an org-agnostic path. `None` is not a member.
+async fn resolve_user(user_id: &str, path: &str, path_columns: &[&str]) -> Option<User> {
+    let mut user = if is_top_level_org_route(path_columns) {
+        let db_user = db::user::get_db_user(user_id).await;
+        match db_user {
+            Ok(user) => {
+                let all_users = user.get_all_users();
+                if all_users.is_empty() {
+                    None
+                } else {
+                    // For organizations endpoint, specifically look for user in _meta org
+                    // since permission check at line 966 expects the user to be in _meta
+                    all_users
+                        .iter()
+                        .find(|u| u.org == config::META_ORG_ID)
+                        .cloned()
+                        .or_else(|| all_users.first().cloned())
+                }
+            }
+            Err(e) => {
+                log::debug!("Error getting user in validate_credentials: {e}");
+                None
+            }
+        }
+    } else {
+        match path.find('/') {
+            Some(_) => {
+                let org_id = org_from_path(path_columns);
+
+                if is_root_user(user_id) {
+                    users::get_user(Some(DEFAULT_ORG), user_id).await
+                } else {
+                    users::get_user(Some(org_id), user_id).await
+                }
+            }
+            None => users::get_user(None, user_id).await,
+        }
+    };
+
+    if user.is_none() {
+        // for license, we do not provide org in path, but
+        // want to be able to access it in all orgs, as long as user has
+        // logged in. So here we check if the user id is part of atleast one
+        // org, and if so, allow the call. If the user is not part of the current org
+        // rest of api calls will get blocked anyways, but without this,
+        // native users get stuck in logout loop if they go to any page calling license
+        // api call
+        if is_org_agnostic_path(path)
+            && let Ok(v) = db::user::get_user_record(user_id).await
+        {
+            // we set the record manually with minimal permission,
+            // so the password check later can be done correctly
+            user = Some(User {
+                email: v.email,
+                first_name: v.first_name,
+                last_name: v.last_name,
+                password: v.password,
+                salt: v.salt,
+                token: "".into(),
+                rum_token: None,
+                role: UserRole::User,
+                org: "".into(),
+                is_external: v.user_type == UserType::External,
+                password_ext: v.password_ext,
+            });
+        } else {
+            return None;
+        }
+    }
+    user
+}
+
 pub async fn validate_credentials(
     user_id: &str,
     user_password: &str,
@@ -617,82 +690,17 @@ pub async fn validate_credentials(
         }
     }
 
-    let mut user = if is_top_level_org_route(&path_columns) {
-        let db_user = db::user::get_db_user(user_id).await;
-        match db_user {
-            Ok(user) => {
-                let all_users = user.get_all_users();
-                if all_users.is_empty() {
-                    None
-                } else {
-                    // For organizations endpoint, specifically look for user in _meta org
-                    // since permission check at line 966 expects the user to be in _meta
-                    all_users
-                        .iter()
-                        .find(|u| u.org == config::META_ORG_ID)
-                        .cloned()
-                        .or_else(|| all_users.first().cloned())
-                }
-            }
-            Err(e) => {
-                log::debug!("Error getting user in validate_credentials: {e}");
-                None
-            }
-        }
-    } else {
-        match path.find('/') {
-            Some(_) => {
-                let org_id = org_from_path(&path_columns);
-
-                if is_root_user(user_id) {
-                    users::get_user(Some(DEFAULT_ORG), user_id).await
-                } else {
-                    users::get_user(Some(org_id), user_id).await
-                }
-            }
-            None => users::get_user(None, user_id).await,
-        }
+    let Some(user) = resolve_user(user_id, path, &path_columns).await else {
+        return Ok(TokenValidationResponse {
+            is_valid: false,
+            user_email: "".to_string(),
+            is_internal_user: false,
+            user_role: None,
+            user_name: "".to_string(),
+            family_name: "".to_string(),
+            given_name: "".to_string(),
+        });
     };
-
-    if user.is_none() {
-        // for license, we do not provide org in path, but
-        // want to be able to access it in all orgs, as long as user has
-        // logged in. So here we check if the user id is part of atleast one
-        // org, and if so, allow the call. If the user is not part of the current org
-        // rest of api calls will get blocked anyways, but without this,
-        // native users get stuck in logout loop if they go to any page calling license
-        // api call
-        if is_org_agnostic_path(path)
-            && let Ok(v) = db::user::get_user_record(user_id).await
-        {
-            // we set the record manually with minimal permission,
-            // so the password check later can be done correctly
-            user = Some(User {
-                email: v.email,
-                first_name: v.first_name,
-                last_name: v.last_name,
-                password: v.password,
-                salt: v.salt,
-                token: "".into(),
-                rum_token: None,
-                role: UserRole::User,
-                org: "".into(),
-                is_external: v.user_type == UserType::External,
-                password_ext: v.password_ext,
-            });
-        } else {
-            return Ok(TokenValidationResponse {
-                is_valid: false,
-                user_email: "".to_string(),
-                is_internal_user: false,
-                user_role: None,
-                user_name: "".to_string(),
-                family_name: "".to_string(),
-                given_name: "".to_string(),
-            });
-        }
-    }
-    let user = user.unwrap();
 
     // System-wide blocklist — deny external SSO identities before any token/password branch, so it
     // also covers external service-account static tokens and ingestion. Native/internal untouched.
@@ -1347,6 +1355,68 @@ async fn session_grants_token(session_id: &str, token: &str) -> bool {
     matches!(db::session::get(session_id).await, Ok(stored) if stored == token)
 }
 
+// Reached only through the session marker: the ID token is verified again on every request, so a
+// session ends with its token, and the stored email must still be a member of the path's org.
+#[cfg(feature = "zitadel")]
+async fn validate_zitadel_session(
+    req_data: &RequestData,
+    auth_info: &AuthExtractor,
+    path_prefix: &str,
+    payload: Option<&str>,
+) -> Result<AuthValidationResult, AuthError> {
+    let unauthorized = || AuthError::Unauthorized("Unauthorized Access".to_string());
+    let (Some(payload), Some(zitadel)) = (payload, o2_zitadel::zitadel()) else {
+        return Err(unauthorized());
+    };
+    let admitted = zitadel.verify_session(payload).await.map_err(|refusal| {
+        log::debug!("zitadel session refused: {}", refusal.class());
+        unauthorized()
+    })?;
+    let email = admitted.email;
+    if is_root_user(&email) {
+        return Err(unauthorized());
+    }
+    let uri_path = req_data.uri.path();
+    let path = routed_path(uri_path.strip_prefix(path_prefix).unwrap_or(uri_path));
+    let path = path.strip_prefix('/').unwrap_or(path);
+    let mut path_columns = path.split('/').collect::<Vec<&str>>();
+    if path_columns.last().is_some_and(|v| v.is_empty()) {
+        path_columns.pop();
+    }
+    let Some(user) = resolve_user(&email, path, &path_columns).await else {
+        return Err(unauthorized());
+    };
+    if user.role.is_service_account() {
+        return Err(unauthorized());
+    }
+    if path.contains("/user")
+        && !(user.role.eq(&UserRole::Admin)
+            || user.role.eq(&UserRole::Root)
+            || user.email.eq(&email))
+    {
+        return Err(AuthError::RoleRefused("Not allowed".to_string()));
+    }
+    if auth_info.bypass_check
+        || check_permissions(
+            &user.email,
+            auth_info.clone(),
+            user.role.clone(),
+            user.is_external,
+        )
+        .await
+    {
+        Ok(AuthValidationResult {
+            user_email: user.email,
+            user_role: Some(user.role),
+            is_internal_user: !user.is_external,
+            token_name: None,
+            delegation: None,
+        })
+    } else {
+        Err(AuthError::RoleRefused("Unauthorized Access".to_string()))
+    }
+}
+
 async fn oo_validator_internal(
     req_data: &RequestData,
     auth_info: &AuthExtractor,
@@ -1362,6 +1432,12 @@ async fn oo_validator_internal(
         },
         None => (false, auth_info.auth.clone()),
     };
+
+    #[cfg(feature = "zitadel")]
+    if auth_str.starts_with(o2_zitadel::SESSION_SCHEME) {
+        let payload = o2_zitadel::session_payload(&auth_str, is_from_session);
+        return validate_zitadel_session(req_data, auth_info, path_prefix, payload).await;
+    }
 
     if let Some(info) = auth_str.strip_prefix("Basic ").map(str::trim) {
         let decoded = match base64::decode(info) {
@@ -2429,6 +2505,42 @@ CN5lTowpVXP2OIiiNTGa75Fj
         assert!(
             oo_validator(&req_data, &genuine).await.is_ok(),
             "a marker backed by a live session must still authenticate"
+        );
+    }
+
+    #[cfg(feature = "zitadel")]
+    #[tokio::test]
+    async fn test_zitadel_scheme_needs_a_live_session() {
+        let req_data = RequestData {
+            route: None,
+            uri: "/default/users".parse().unwrap(),
+            method: Method::GET,
+            headers: HeaderMap::new(),
+        };
+        let stored = "Zitadel {\"id_token\":\"x\",\"nonce\":\"y\"}";
+        let raw = AuthExtractor {
+            auth: stored.to_string(),
+            method: "GET".to_string(),
+            o2_type: String::new(),
+            org_id: String::new(),
+            bypass_check: true,
+            parent_id: String::new(),
+            use_all_org: false,
+            use_self_context: false,
+            use_self_parent: false,
+            feature: None,
+        };
+        assert!(
+            oo_validator(&req_data, &raw).await.is_err(),
+            "a client-supplied Zitadel scheme must be refused"
+        );
+        let forged = AuthExtractor {
+            auth: format!("{SESSION_AUTH_MARKER}forged::{stored}"),
+            ..raw.clone()
+        };
+        assert!(
+            oo_validator(&req_data, &forged).await.is_err(),
+            "a marker naming no live session must be refused"
         );
     }
 
