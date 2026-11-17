@@ -19,7 +19,7 @@ use arrow::{
     array::{Float64Array, Int64Array, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
 };
-use o2_substrate::{Filter, LaneTable, Refusal, TIMESTAMP};
+use o2_substrate::{Filter, Reader, Refusal, Scope, StreamSource, TIMESTAMP};
 use serde_json::Value;
 
 /// A minute boundary, as the fixture's base is; captured times are relative to it.
@@ -63,6 +63,16 @@ fn fixture(mutate: bool) -> RecordBatch {
     .unwrap()
 }
 
+/// The class and reader scope the fixture's stream is served under in these tests.
+const CLASS: u32 = 0x0C1D_0001;
+const READER: Scope = Scope { id: 1 };
+
+fn stream(batch: &RecordBatch) -> Result<StreamSource, Refusal> {
+    let mut source = StreamSource::new(CLASS, READER);
+    source.append(batch)?;
+    Ok(source)
+}
+
 /// What the published upstream v1.1.2 binary answered for the same fixture.
 fn upstream(query: &str) -> Value {
     let path = concat!(
@@ -73,7 +83,7 @@ fn upstream(query: &str) -> Value {
     capture["sql"][query]["hits"].clone()
 }
 
-fn filter_and_not(table: &LaneTable) -> usize {
+fn filter_and_not(table: &Reader<'_>) -> usize {
     let filter = Filter::and(vec![
         table.eq_text("level", "error").unwrap(),
         table.ne_int("status", 200).unwrap(),
@@ -84,7 +94,8 @@ fn filter_and_not(table: &LaneTable) -> usize {
 
 #[test]
 fn lane_answers_equal_the_upstream_capture() {
-    let table = LaneTable::from_batch(&fixture(false)).unwrap();
+    let source = stream(&fixture(false)).unwrap();
+    let table = source.reader().unwrap();
 
     assert_eq!(
         table.count(table.all()).unwrap() as u64,
@@ -127,7 +138,8 @@ fn lane_answers_equal_the_upstream_capture() {
 
 #[test]
 fn a_changed_row_changes_the_lane_answers() {
-    let table = LaneTable::from_batch(&fixture(true)).unwrap();
+    let source = stream(&fixture(true)).unwrap();
+    let table = source.reader().unwrap();
     assert_ne!(
         filter_and_not(&table) as u64,
         upstream("filter_and_not")[0]["c"].as_u64().unwrap()
@@ -140,7 +152,8 @@ fn a_changed_row_changes_the_lane_answers() {
 
 #[test]
 fn time_buckets_and_grouped_answers_equal_the_upstream_capture() {
-    let table = LaneTable::from_batch(&fixture(false)).unwrap();
+    let source = stream(&fixture(false)).unwrap();
+    let table = source.reader().unwrap();
 
     let buckets: Vec<(i64, u64)> = table
         .count_by_time(60_000_000)
@@ -196,15 +209,16 @@ fn a_time_the_lane_cannot_hold_is_refused() {
         .unwrap()
     };
     assert_eq!(
-        LaneTable::from_batch(&batch(vec![BASE_US, BASE_US + 1])).err(),
+        stream(&batch(vec![BASE_US, BASE_US + 1])).err(),
         Some(Refusal::Precision(TIMESTAMP.to_string(), BASE_US + 1))
     );
     let far = BASE_US + (i64::from(i32::MAX) + 1) * 1_000;
     assert_eq!(
-        LaneTable::from_batch(&batch(vec![BASE_US, far])).err(),
+        stream(&batch(vec![BASE_US, far])).err(),
         Some(Refusal::Precision(TIMESTAMP.to_string(), far))
     );
-    let table = LaneTable::from_batch(&batch(vec![BASE_US])).unwrap();
+    let source = stream(&batch(vec![BASE_US])).unwrap();
+    let table = source.reader().unwrap();
     assert_eq!(
         table.count_by_time(1_500).err(),
         Some(Refusal::Precision(TIMESTAMP.to_string(), 1_500))
@@ -214,7 +228,8 @@ fn a_time_the_lane_cannot_hold_is_refused() {
 /// The fixture splits 200 / not-200 evenly, so only an uneven value tells `!=` from `==`.
 #[test]
 fn not_equal_is_not_equal() {
-    let table = LaneTable::from_batch(&fixture(false)).unwrap();
+    let source = stream(&fixture(false)).unwrap();
+    let table = source.reader().unwrap();
     assert_eq!(
         table.count(table.ne_int("status", 404).unwrap()).unwrap(),
         225
@@ -223,7 +238,8 @@ fn not_equal_is_not_equal() {
 
 #[test]
 fn a_text_the_column_never_held_counts_zero() {
-    let table = LaneTable::from_batch(&fixture(false)).unwrap();
+    let source = stream(&fixture(false)).unwrap();
+    let table = source.reader().unwrap();
     assert_eq!(
         table
             .count(table.eq_text("level", "fatal").unwrap())
@@ -244,7 +260,7 @@ fn what_has_no_lane_is_refused() {
     )
     .unwrap();
     assert_eq!(
-        LaneTable::from_batch(&floats).err(),
+        stream(&floats).err(),
         Some(Refusal::Type("value".to_string(), DataType::Float64))
     );
 
@@ -254,11 +270,12 @@ fn what_has_no_lane_is_refused() {
     )
     .unwrap();
     assert_eq!(
-        LaneTable::from_batch(&wide).err(),
+        stream(&wide).err(),
         Some(Refusal::Range("n".to_string(), i64::from(i32::MAX) + 1))
     );
 
-    let table = LaneTable::from_batch(&fixture(false)).unwrap();
+    let source = stream(&fixture(false)).unwrap();
+    let table = source.reader().unwrap();
     assert_eq!(
         table.eq_text("status", "200").err(),
         Some(Refusal::Kind("status".to_string()))
@@ -269,10 +286,10 @@ fn what_has_no_lane_is_refused() {
     );
 }
 
-/// One column more than a 16-bit lane id addresses would alias column 0.
+/// A stream's basis holds at most 256 fields, the positions a field mask addresses.
 #[test]
-fn more_columns_than_lane_ids_are_refused() {
-    let columns = u16::MAX as usize + 2;
+fn more_fields_than_a_basis_holds_are_refused() {
+    let columns = 257;
     let fields: Vec<Field> = (0..columns)
         .map(|i| Field::new(format!("c{i}"), DataType::Int64, false))
         .collect();
@@ -280,8 +297,5 @@ fn more_columns_than_lane_ids_are_refused() {
         .map(|_| Arc::new(Int64Array::from(Vec::<i64>::new())) as Arc<dyn arrow::array::Array>)
         .collect();
     let too_wide = RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).unwrap();
-    assert_eq!(
-        LaneTable::from_batch(&too_wide).err(),
-        Some(Refusal::Columns(columns))
-    );
+    assert_eq!(stream(&too_wide).err(), Some(Refusal::Columns(columns)));
 }
