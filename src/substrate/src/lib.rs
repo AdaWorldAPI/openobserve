@@ -29,6 +29,8 @@ const LIVE: Mask = Mask(0);
 /// OpenObserve's event-time column, microseconds since the epoch.
 pub const TIMESTAMP: &str = "_timestamp";
 const US_PER_MS: i64 = 1_000;
+/// A lane is addressed by a 16-bit column id.
+const MAX_COLUMNS: usize = u16::MAX as usize + 1;
 
 /// One stream batch as coded lanes: text columns are dictionary codes, integers are `i32`.
 pub struct LaneTable {
@@ -43,6 +45,9 @@ impl LaneTable {
     pub fn from_batch(batch: &RecordBatch) -> Result<Self, Refusal> {
         let rows = batch.num_rows();
         let schema = batch.schema();
+        if batch.num_columns() > MAX_COLUMNS {
+            return Err(Refusal::Columns(batch.num_columns()));
+        }
         let mut names = Vec::with_capacity(batch.num_columns());
         let mut lanes = Vec::with_capacity(batch.num_columns());
         for (field, column) in schema.fields().iter().zip(batch.columns()) {
@@ -256,6 +261,8 @@ pub enum Refusal {
     /// A time finer than the millisecond lane, or a span or width it cannot hold.
     Precision(String, i64),
     Column(String),
+    /// More columns than a lane id addresses.
+    Columns(usize),
     Kind(String),
     Lower(String),
     Run(String),

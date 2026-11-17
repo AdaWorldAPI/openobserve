@@ -268,3 +268,20 @@ fn what_has_no_lane_is_refused() {
         Some(Refusal::Column("nope".to_string()))
     );
 }
+
+/// One column more than a 16-bit lane id addresses would alias column 0.
+#[test]
+fn more_columns_than_lane_ids_are_refused() {
+    let columns = u16::MAX as usize + 2;
+    let fields: Vec<Field> = (0..columns)
+        .map(|i| Field::new(format!("c{i}"), DataType::Int64, false))
+        .collect();
+    let arrays = (0..columns)
+        .map(|_| Arc::new(Int64Array::from(Vec::<i64>::new())) as Arc<dyn arrow::array::Array>)
+        .collect();
+    let too_wide = RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).unwrap();
+    assert_eq!(
+        LaneTable::from_batch(&too_wide).err(),
+        Some(Refusal::Columns(columns))
+    );
+}
