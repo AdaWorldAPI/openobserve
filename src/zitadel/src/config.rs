@@ -65,42 +65,6 @@ pub struct ZitadelConfig {
     pub root_break_glass: bool,
 }
 
-impl fmt::Debug for ZitadelConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ZitadelConfig")
-            .field("issuer", &self.issuer)
-            .field("client_id", &self.client_id)
-            .field("redirect_url", &self.redirect_url)
-            .field("tenants", &self.tenants.len())
-            .finish_non_exhaustive()
-    }
-}
-
-/// A refused configuration. The message names the variable or row, never a value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfigError(pub String);
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for ConfigError {}
-
-fn cfg_err(msg: impl Into<String>) -> ConfigError {
-    ConfigError(msg.into())
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RowJson {
-    org: String,
-    o2_org: String,
-    role: String,
-    email_domains: Vec<String>,
-}
-
 impl ZitadelConfig {
     /// `Ok(None)` unless issuer, client id and redirect URL are all set. A bad value is an error.
     pub fn from_vars(get: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, ConfigError> {
@@ -154,6 +118,42 @@ impl ZitadelConfig {
     pub fn tenant(&self, org: &str) -> Option<&TenantRow> {
         self.tenants.iter().find(|t| t.org == org)
     }
+}
+
+impl fmt::Debug for ZitadelConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ZitadelConfig")
+            .field("issuer", &self.issuer)
+            .field("client_id", &self.client_id)
+            .field("redirect_url", &self.redirect_url)
+            .field("tenants", &self.tenants.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A refused configuration. The message names the variable or row, never a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigError(pub String);
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RowJson {
+    org: String,
+    o2_org: String,
+    role: String,
+    email_domains: Vec<String>,
+}
+
+fn cfg_err(msg: impl Into<String>) -> ConfigError {
+    ConfigError(msg.into())
 }
 
 fn parse_bool(v: Option<String>, default: bool) -> Option<bool> {

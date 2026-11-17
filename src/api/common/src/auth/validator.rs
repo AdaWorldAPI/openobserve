@@ -772,6 +772,10 @@ pub async fn validate_credentials(
 
     // Enforce native login restrictions only for password-based authentication
     // (Token authentication has already been checked above)
+    #[cfg(feature = "zitadel")]
+    if password_auth_refused(o2_zitadel::password_policy(), is_root_user(user_id)) {
+        return Ok(TokenValidationResponse::default());
+    }
     #[cfg(feature = "enterprise")]
     {
         if !get_dex_config().native_login_enabled && !user.is_external {
@@ -1415,6 +1419,12 @@ async fn validate_zitadel_session(
     } else {
         Err(AuthError::RoleRefused("Unauthorized Access".to_string()))
     }
+}
+
+// Password auth on API calls obeys the same policy as `POST /auth/login`.
+#[cfg(feature = "zitadel")]
+fn password_auth_refused(policy: Option<(bool, bool)>, is_root: bool) -> bool {
+    !o2_zitadel::password_login_policy(policy, is_root)
 }
 
 async fn oo_validator_internal(
