@@ -16,6 +16,7 @@ WORKDIR /openobserve
 COPY . /openobserve
 COPY --from=webbuilder /web/dist web/dist
 RUN rustup show active-toolchain || rustup toolchain install
+ENV CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_INCREMENTAL=0
 RUN cargo build --release --features zitadel
 
 FROM public.ecr.aws/debian/debian:trixie-slim AS runtime
