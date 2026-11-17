@@ -201,6 +201,25 @@ describe("Login", () => {
     expect(wrapper.vm.showSSO).toBe(false);
   });
 
+  it("should return true for showSSO in an open-source build when the server reports SSO", async () => {
+    const { default: config } = await import("@/aws-exports");
+    (config as any).isEnterprise = "false";
+    try {
+      const ossStore = createStore({
+        state: { zoConfig: { sso_enabled: true, native_login_enabled: false }, userInfo: {} },
+        actions: {
+          setUserInfo: vi.fn(),
+          setCurrentUser: vi.fn(),
+          setSelectedOrganization: vi.fn(),
+        },
+      });
+      wrapper = mount(Login, { global: { plugins: [i18n, ossStore, router] } });
+      expect(wrapper.vm.showSSO).toBe(true);
+    } finally {
+      (config as any).isEnterprise = "true";
+    }
+  });
+
   it("should return false for showInternalLogin when native login is disabled", () => {
     const storeWithoutNativeLogin = createStore({
       state: {

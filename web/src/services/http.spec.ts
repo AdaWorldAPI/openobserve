@@ -154,6 +154,20 @@ describe("attemptTokenRefresh", () => {
     expect(reloadMock).not.toHaveBeenCalled();
   });
 
+  it("should call dex_refresh in an open-source build whose server reports SSO", async () => {
+    (config as any).isEnterprise = "false";
+    (store.state as any).zoConfig.sso_enabled = true;
+
+    buildAxiosMock(() => Promise.resolve({ status: 200 }));
+
+    await expect(
+      attemptTokenRefresh("http://localhost:5080/api/org/_search"),
+    ).resolves.toBeUndefined();
+
+    expect(vi.mocked(store.dispatch)).not.toHaveBeenCalled();
+    expect(reloadMock).not.toHaveBeenCalled();
+  });
+
   // ---------------------------------------------------------------------------
   // Enterprise SSO — dex_refresh fails → logout then reject
   // ---------------------------------------------------------------------------
