@@ -262,6 +262,7 @@ members = [
     "src/api/pipelines",
     "src/api/search",
     "src/api/common",
+    "src/zitadel",
     "src/ingestion_common",
     "src/schema",
     "src/compaction",
