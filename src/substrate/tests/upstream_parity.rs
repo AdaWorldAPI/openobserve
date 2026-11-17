@@ -19,8 +19,11 @@ use arrow::{
     array::{Float64Array, Int64Array, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
 };
-use o2_substrate::{LaneTable, Refusal};
+use o2_substrate::{Filter, LaneTable, Refusal, TIMESTAMP};
 use serde_json::Value;
+
+/// A minute boundary, as the fixture's base is; captured times are relative to it.
+const BASE_US: i64 = 1_800_000_000_000_000;
 
 /// The log half of the fixture `tests/parity/o2_parity.py` ingests, row for row.
 fn fixture(mutate: bool) -> RecordBatch {
@@ -37,7 +40,9 @@ fn fixture(mutate: bool) -> RecordBatch {
         .collect();
     let latency: Vec<i64> = (0..n).map(|i| (i * 37) % 251).collect();
     let tenant: Vec<String> = (0..n).map(|i| format!("t{}", i % 2)).collect();
+    let time: Vec<i64> = (0..n).map(|i| BASE_US + i * 1_000_000).collect();
     let schema = Schema::new(vec![
+        Field::new(TIMESTAMP, DataType::Int64, false),
         Field::new("level", DataType::Utf8, false),
         Field::new("service", DataType::Utf8, false),
         Field::new("status", DataType::Int64, false),
@@ -47,6 +52,7 @@ fn fixture(mutate: bool) -> RecordBatch {
     RecordBatch::try_new(
         Arc::new(schema),
         vec![
+            Arc::new(Int64Array::from(time)),
             Arc::new(StringArray::from(level)),
             Arc::new(StringArray::from(service)),
             Arc::new(Int64Array::from(status)),
@@ -68,7 +74,7 @@ fn upstream(query: &str) -> Value {
 }
 
 fn filter_and_not(table: &LaneTable) -> usize {
-    let filter = o2_substrate::Filter::and(vec![
+    let filter = Filter::and(vec![
         table.eq_text("level", "error").unwrap(),
         table.ne_int("status", 200).unwrap(),
         table.eq_text("tenant", "t1").unwrap(),
@@ -130,6 +136,79 @@ fn a_changed_row_changes_the_lane_answers() {
         .count(table.eq_text("level", "error").unwrap())
         .unwrap();
     assert_eq!(errors, 101);
+}
+
+#[test]
+fn time_buckets_and_grouped_answers_equal_the_upstream_capture() {
+    let table = LaneTable::from_batch(&fixture(false)).unwrap();
+
+    let buckets: Vec<(i64, u64)> = table
+        .count_by_time(60_000_000)
+        .unwrap()
+        .into_iter()
+        .map(|(start, rows)| (start - BASE_US, rows as u64))
+        .collect();
+    let want: Vec<(i64, u64)> = upstream("histogram_1m")
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| (h["t"]["rel_us"].as_i64().unwrap(), h["c"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(buckets, want);
+
+    for hit in upstream("avg_by_tenant").as_array().unwrap() {
+        let tenant = table
+            .eq_text("tenant", hit["tenant"].as_str().unwrap())
+            .unwrap();
+        let avg = table.avg(tenant, "latency_ms").unwrap().unwrap();
+        assert_eq!((avg * 1e6).round() / 1e6, hit["a"].as_f64().unwrap());
+    }
+
+    let pairs = upstream("group_two_keys");
+    let mut rows = 0;
+    for hit in pairs.as_array().unwrap() {
+        let filter = Filter::and(vec![
+            table
+                .eq_text("service", hit["service"].as_str().unwrap())
+                .unwrap(),
+            table
+                .eq_int("status", hit["status"].as_i64().unwrap() as i32)
+                .unwrap(),
+        ]);
+        let got = table.count(filter).unwrap() as u64;
+        assert_eq!(got, hit["c"].as_u64().unwrap());
+        rows += got;
+    }
+    assert_eq!(rows, 300, "the upstream groups cover every row");
+}
+
+#[test]
+fn a_time_the_lane_cannot_hold_is_refused() {
+    let batch = |times: Vec<i64>| {
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new(
+                TIMESTAMP,
+                DataType::Int64,
+                false,
+            )])),
+            vec![Arc::new(Int64Array::from(times))],
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        LaneTable::from_batch(&batch(vec![BASE_US, BASE_US + 1])).err(),
+        Some(Refusal::Precision(TIMESTAMP.to_string(), BASE_US + 1))
+    );
+    let far = BASE_US + (i64::from(i32::MAX) + 1) * 1_000;
+    assert_eq!(
+        LaneTable::from_batch(&batch(vec![BASE_US, far])).err(),
+        Some(Refusal::Precision(TIMESTAMP.to_string(), far))
+    );
+    let table = LaneTable::from_batch(&batch(vec![BASE_US])).unwrap();
+    assert_eq!(
+        table.count_by_time(1_500).err(),
+        Some(Refusal::Precision(TIMESTAMP.to_string(), 1_500))
+    );
 }
 
 /// The fixture splits 200 / not-200 evenly, so only an uneven value tells `!=` from `==`.

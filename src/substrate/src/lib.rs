@@ -26,6 +26,9 @@ use lance_graph_quack::{Agg, Cmp, Col, Mask, Query, lower};
 
 /// The plane holding one set bit per row of the table.
 const LIVE: Mask = Mask(0);
+/// OpenObserve's event-time column, microseconds since the epoch.
+pub const TIMESTAMP: &str = "_timestamp";
+const US_PER_MS: i64 = 1_000;
 
 /// One stream batch as coded lanes: text columns are dictionary codes, integers are `i32`.
 pub struct LaneTable {
@@ -48,6 +51,7 @@ impl LaneTable {
             }
             let lane = match field.data_type() {
                 DataType::Utf8 => text_lane(column),
+                DataType::Int64 if field.name() == TIMESTAMP => time_lane(column)?,
                 DataType::Int64 => int_lane(field.name(), column)?,
                 other => return Err(Refusal::Type(field.name().clone(), other.clone())),
             };
@@ -79,6 +83,10 @@ impl LaneTable {
             Some(code) => Filter::cmp(col, Cmp::EqU32(code)),
             None => Filter::negate(Filter::plane(LIVE)),
         })
+    }
+
+    pub fn eq_int(&self, column: &str, value: i32) -> Result<Filter, Refusal> {
+        Ok(Filter::cmp(self.int(column)?, Cmp::EqI32(value)))
     }
 
     pub fn ne_int(&self, column: &str, value: i32) -> Result<Filter, Refusal> {
@@ -122,6 +130,43 @@ impl LaneTable {
             .collect()
     }
 
+    /// `None` when no row passes, as SQL `AVG` over no rows is NULL.
+    pub fn avg(&self, filter: Filter, column: &str) -> Result<Option<f64>, Refusal> {
+        let rows = self.count(filter.clone())?;
+        if rows == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.sum(filter, column)? as f64 / rows as f64))
+    }
+
+    /// Rows per `width_us` bucket of event time, as `(bucket start, rows)`; empty buckets are
+    /// left out, and buckets align to the epoch as SQL `histogram` does.
+    pub fn count_by_time(&self, width_us: i64) -> Result<Vec<(i64, usize)>, Refusal> {
+        let (col, offsets, base_us) = self.time()?;
+        if width_us <= 0 || width_us % US_PER_MS != 0 {
+            return Err(Refusal::Precision(TIMESTAMP.to_string(), width_us));
+        }
+        let Some(&last) = offsets.iter().max() else {
+            return Ok(Vec::new());
+        };
+        let end_us = base_us + i64::from(last) * US_PER_MS;
+        let mut start_us = base_us.div_euclid(width_us) * width_us;
+        let mut buckets = Vec::new();
+        while start_us <= end_us {
+            let lo = to_offset_ms(start_us - base_us);
+            let hi = to_offset_ms(start_us + width_us - base_us);
+            let rows = self.count(Filter::and([
+                Filter::cmp(col, Cmp::GeI32(lo)),
+                Filter::cmp(col, Cmp::LtI32(hi)),
+            ]))?;
+            if rows != 0 {
+                buckets.push((start_us, rows));
+            }
+            start_us += width_us;
+        }
+        Ok(buckets)
+    }
+
     fn extreme(&self, filter: Filter, agg: Agg) -> Result<Option<i32>, Refusal> {
         match self.run(filter, agg)? {
             Value::OptI32(v) => Ok(v),
@@ -155,7 +200,7 @@ impl LaneTable {
         let i = self.position(column)?;
         match &self.lanes[i] {
             Lane::Text { dict, .. } => Ok((Col(i as u16), dict)),
-            Lane::Int(_) => Err(Refusal::Kind(column.to_string())),
+            _ => Err(Refusal::Kind(column.to_string())),
         }
     }
 
@@ -163,14 +208,33 @@ impl LaneTable {
         let i = self.position(column)?;
         match &self.lanes[i] {
             Lane::Int(_) => Ok(Col(i as u16)),
-            Lane::Text { .. } => Err(Refusal::Kind(column.to_string())),
+            _ => Err(Refusal::Kind(column.to_string())),
+        }
+    }
+
+    fn time(&self) -> Result<(Col, &[i32], i64), Refusal> {
+        let i = self.position(TIMESTAMP)?;
+        match &self.lanes[i] {
+            Lane::Time {
+                offsets_ms,
+                base_us,
+            } => Ok((Col(i as u16), offsets_ms, *base_us)),
+            _ => Err(Refusal::Kind(TIMESTAMP.to_string())),
         }
     }
 }
 
 enum Lane {
-    Text { codes: Vec<u32>, dict: Dict },
+    Text {
+        codes: Vec<u32>,
+        dict: Dict,
+    },
     Int(Vec<i32>),
+    /// Milliseconds after `base_us`, so an ordered compare fits the signed 32-bit lane.
+    Time {
+        offsets_ms: Vec<i32>,
+        base_us: i64,
+    },
 }
 
 impl Lane {
@@ -178,6 +242,7 @@ impl Lane {
         match self {
             Lane::Text { codes, .. } => LaneRef::U32(codes),
             Lane::Int(values) => LaneRef::I32(values),
+            Lane::Time { offsets_ms, .. } => LaneRef::I32(offsets_ms),
         }
     }
 }
@@ -188,6 +253,8 @@ pub enum Refusal {
     Type(String, DataType),
     Null(String),
     Range(String, i64),
+    /// A time finer than the millisecond lane, or a span or width it cannot hold.
+    Precision(String, i64),
     Column(String),
     Kind(String),
     Lower(String),
@@ -215,4 +282,33 @@ fn int_lane(name: &str, column: &Arc<dyn Array>) -> Result<Lane, Refusal> {
         .map(|&v| i32::try_from(v).map_err(|_| Refusal::Range(name.to_string(), v)))
         .collect::<Result<Vec<i32>, Refusal>>()
         .map(Lane::Int)
+}
+
+fn time_lane(column: &Arc<dyn Array>) -> Result<Lane, Refusal> {
+    let times = column
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("Int64 column is an Int64Array");
+    let base_us = times.values().iter().copied().min().unwrap_or(0);
+    times
+        .values()
+        .iter()
+        .map(|&us| {
+            let offset = us - base_us;
+            if offset % US_PER_MS != 0 {
+                return Err(Refusal::Precision(TIMESTAMP.to_string(), us));
+            }
+            i32::try_from(offset / US_PER_MS)
+                .map_err(|_| Refusal::Precision(TIMESTAMP.to_string(), us))
+        })
+        .collect::<Result<Vec<i32>, Refusal>>()
+        .map(|offsets_ms| Lane::Time {
+            offsets_ms,
+            base_us,
+        })
+}
+
+/// Saturates: a bound past the lane's range still compares correctly against every offset.
+fn to_offset_ms(offset_us: i64) -> i32 {
+    (offset_us.div_euclid(US_PER_MS)).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
