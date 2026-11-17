@@ -49,23 +49,6 @@ pub struct StreamSource {
     base_us: Option<i64>,
 }
 
-pub(crate) struct StreamField {
-    pub(crate) name: String,
-    pub(crate) values: Values,
-    /// One bit per row, set where the row holds a value.
-    pub(crate) presence: Vec<u64>,
-}
-
-pub(crate) enum Values {
-    /// Codes into the field's code space, numbered in the order keys first appeared.
-    Text {
-        codes: Vec<u32>,
-        index: HashMap<String, u32>,
-    },
-    Int(Vec<i32>),
-    Time(Vec<i32>),
-}
-
 impl StreamSource {
     pub fn new(class: u32, scope: Scope) -> Self {
         let frames = FrameStore::new(FrameRevisions {
@@ -224,8 +207,9 @@ impl StreamSource {
             let values = match field.data_type() {
                 DataType::Utf8 => StagedValues::Text(text_values(column)),
                 DataType::Int64 if name == TIMESTAMP => {
-                    let base = *base_us.get_or_insert_with(|| min_valid(column));
-                    StagedValues::Time(time_values(column, base)?)
+                    // A batch with no time value fixes no base; its cells are all absent.
+                    base_us = base_us.or_else(|| min_valid(column));
+                    StagedValues::Time(time_values(column, base_us.unwrap_or(0))?)
                 }
                 DataType::Int64 => StagedValues::Int(int_values(name, column)?),
                 other => return Err(Refusal::Type(name.clone(), other.clone())),
@@ -336,6 +320,13 @@ impl ClassView for StreamView {
     }
 }
 
+pub(crate) struct StreamField {
+    pub(crate) name: String,
+    pub(crate) values: Values,
+    /// One bit per row, set where the row holds a value.
+    pub(crate) presence: Vec<u64>,
+}
+
 impl StreamField {
     fn empty(name: String, like: &StagedValues, rows: usize) -> Self {
         let values = match like {
@@ -405,6 +396,16 @@ impl StreamField {
     }
 }
 
+pub(crate) enum Values {
+    /// Codes into the field's code space, numbered in the order keys first appeared.
+    Text {
+        codes: Vec<u32>,
+        index: HashMap<String, u32>,
+    },
+    Int(Vec<i32>),
+    Time(Vec<i32>),
+}
+
 impl Values {
     /// How many codes a text field has issued; `None` for any other kind.
     pub(crate) fn text_codes(&self) -> Option<usize> {
@@ -466,8 +467,8 @@ fn int_values(name: &str, column: &Arc<dyn Array>) -> Result<Vec<Option<i32>>, R
         .collect()
 }
 
-fn min_valid(column: &Arc<dyn Array>) -> i64 {
-    ints(column).iter().flatten().min().unwrap_or(0)
+fn min_valid(column: &Arc<dyn Array>) -> Option<i64> {
+    ints(column).iter().flatten().min()
 }
 
 fn time_values(column: &Arc<dyn Array>, base_us: i64) -> Result<Vec<Option<i32>>, Refusal> {
