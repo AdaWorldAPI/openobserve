@@ -129,3 +129,30 @@ fn a_field_added_later_keeps_earlier_fields_in_place() {
     assert_eq!(r.sum(r.all(), "n").unwrap(), 10);
     assert_eq!(r.count(r.eq_text("level", "warn").unwrap()).unwrap(), 1);
 }
+
+/// SQL: `NOT (level = 'x')` is UNKNOWN on a row with no level, so that row is not counted.
+#[test]
+fn not_an_unknown_text_skips_absent_cells() {
+    let mut source = StreamSource::new(CLASS, READER);
+    source
+        .append(&batch(vec![("level", texts(&[Some("info"), None]))]))
+        .unwrap();
+    let r = source.reader().unwrap();
+    let never = r.eq_text("level", "missing").unwrap();
+    assert_eq!(r.count(never.clone()).unwrap(), 0);
+    assert_eq!(r.count(o2_substrate::Filter::negate(never)).unwrap(), 1);
+}
+
+#[test]
+fn a_time_batch_with_no_value_fixes_no_base() {
+    let now_us = 1_800_000_000_000_000i64;
+    let mut source = StreamSource::new(CLASS, READER);
+    source
+        .append(&batch(vec![("_timestamp", ints(&[None, None]))]))
+        .unwrap();
+    source
+        .append(&batch(vec![("_timestamp", ints(&[Some(now_us)]))]))
+        .unwrap();
+    let r = source.reader().unwrap();
+    assert_eq!(r.count_by_time(60_000_000).unwrap(), vec![(now_us, 1)]);
+}

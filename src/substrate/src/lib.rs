@@ -32,6 +32,8 @@ const LIVE: Mask = Mask(0);
 /// OpenObserve's event-time column, microseconds since the epoch.
 pub const TIMESTAMP: &str = "_timestamp";
 const US_PER_MS: i64 = 1_000;
+/// A code no text is ever given: codes count up from 0 and a field's key set stays below this.
+const NO_CODE: u32 = u32::MAX;
 /// The route position a stream's class is bound at in a reader's own store.
 const POSITION: u16 = 0;
 
@@ -106,13 +108,15 @@ impl Reader<'_> {
         self.source.rows()
     }
 
-    /// A text the column never held matches no row, so the term is empty, not an error.
+    /// A text the column never held compares against a code no row holds, so the term still
+    /// reads the column and an absent cell stays UNKNOWN under `NOT`.
     pub fn eq_text(&self, column: &str, text: &str) -> Result<Filter, Refusal> {
         let col = self.text(column)?;
-        Ok(match self.source.code(&self.frame, column, text) {
-            Some(code) => Filter::cmp(col, Cmp::EqU32(code)),
-            None => Filter::negate(Filter::plane(LIVE)),
-        })
+        let code = self
+            .source
+            .code(&self.frame, column, text)
+            .unwrap_or(NO_CODE);
+        Ok(Filter::cmp(col, Cmp::EqU32(code)))
     }
 
     pub fn eq_int(&self, column: &str, value: i32) -> Result<Filter, Refusal> {
