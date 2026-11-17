@@ -267,6 +267,7 @@ members = [
     "src/api/search",
     "src/api/common",
     "src/zitadel",
+    "src/substrate",
     "src/ingestion_common",
     "src/schema",
     "src/compaction",

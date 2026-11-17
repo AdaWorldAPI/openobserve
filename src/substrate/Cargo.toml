@@ -1,0 +1,15 @@
+[package]
+name = "o2_substrate"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+
+[dependencies]
+arrow.workspace = true
+lance-graph-dir-sim = { git = "https://github.com/AdaWorldAPI/lance-graph", branch = "main" }
+lance-graph-mask-risc = { git = "https://github.com/AdaWorldAPI/lance-graph", branch = "main" }
+lance-graph-quack = { git = "https://github.com/AdaWorldAPI/lance-graph", branch = "main" }
+
+[dev-dependencies]
+serde_json.workspace = true
