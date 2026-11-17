@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod store;
+
 use std::sync::Arc;
 
 use arrow::{
@@ -23,6 +25,7 @@ use lance_graph_dir_sim::snapshot::Dict;
 use lance_graph_mask_risc::{LaneRef, Planes, Scratch, Value, execute, words_for};
 pub use lance_graph_quack::Filter;
 use lance_graph_quack::{Agg, Cmp, Col, Mask, Query, lower};
+pub use store::{ShadowStats, StreamKey, append, fold, stats};
 
 /// The plane holding one set bit per row of the table.
 const LIVE: Mask = Mask(0);
@@ -45,7 +48,18 @@ pub struct LaneTable {
 impl LaneTable {
     /// Refuses a column type or a value that has no lane, never truncates it.
     pub fn from_batch(batch: &RecordBatch) -> Result<Self, Refusal> {
+        let (table, skipped) = Self::admit(batch)?;
+        match skipped.into_iter().next() {
+            Some(refusal) => Err(refusal),
+            None => Ok(table),
+        }
+    }
+
+    /// The batch without the columns that have no lane; those are named in the second value.
+    /// An event time with no lane refuses the whole batch.
+    pub fn admit(batch: &RecordBatch) -> Result<(Self, Vec<Refusal>), Refusal> {
         let rows = batch.num_rows();
+        let mut skipped = Vec::new();
         let mut table = Self {
             rows,
             columns: Vec::with_capacity(batch.num_columns()),
@@ -58,8 +72,17 @@ impl LaneTable {
             let kind = match field.data_type() {
                 DataType::Utf8 => table.push_text(column),
                 DataType::Int64 if name == TIMESTAMP => table.push_time(column)?,
-                DataType::Int64 => table.push_int(name, column)?,
-                other => return Err(Refusal::Type(name.clone(), other.clone())),
+                DataType::Int64 => match table.push_int(name, column) {
+                    Ok(kind) => kind,
+                    Err(refusal) => {
+                        skipped.push(refusal);
+                        continue;
+                    }
+                },
+                other => {
+                    skipped.push(Refusal::Type(name.clone(), other.clone()));
+                    continue;
+                }
             };
             if column.null_count() != 0 {
                 table.push_validity(name, &kind, column)?;
@@ -72,7 +95,7 @@ impl LaneTable {
                 return Err(Refusal::Columns(batch.num_columns()));
             }
         }
-        Ok(table)
+        Ok((table, skipped))
     }
 
     pub fn rows(&self) -> usize {

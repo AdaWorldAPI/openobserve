@@ -31,6 +31,7 @@ enterprise = [
     "usage_reporting/enterprise",
 ]
 zitadel = ["dep:o2_zitadel"]
+substrate = ["ingester/substrate"]
 cloud = [
     "db/cloud",
     "infra/cloud",

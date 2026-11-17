@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+substrate = ["dep:o2_substrate"]
+
 [dependencies]
+o2_substrate = { workspace = true, optional = true }
 config.workspace = true
 infra.workspace = true
 wal.workspace = true
