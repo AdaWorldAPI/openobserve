@@ -15,25 +15,46 @@
 
 //! Embeds the built web UI (`web/dist`) into the binary.
 //!
-//! This lives in its own leaf crate so the expensive embed + compression
-//! macro expansion only re-runs when `web/dist` changes, not on every
-//! rebuild of the API crate.
+//! This lives in its own leaf crate so the embed only re-runs when
+//! `web/dist` changes, not on every rebuild of the API crate.
 //!
 //! For that to hold, the dependency list here must stay small and stable:
-//! anything this crate depends on drags the ~50MB embed through LLVM again
-//! whenever it changes. `config` in particular used to be a dependency, which
+//! anything this crate depends on rebuilds the embed again whenever it
+//! changes. `config` in particular used to be a dependency, which
 //! meant every `config` edit paid the embed cost. Config values the UI routes
 //! need are passed in as arguments instead — see [`ui_routes`].
-
-use rust_embed_for_web::RustEmbed;
 
 mod ui;
 
 pub use ui::ui_routes;
 
-#[derive(RustEmbed)]
-#[folder = "../../web/dist/"]
-#[allow_missing = true]
-#[gzip = false]
-#[br = false]
+// build.rs reads the folder from the next line and writes one table entry per file, sorted
+// by path. A missing folder gives an empty table.
+// #[folder = "../../web/dist/"]
+include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
+
 pub struct WebAssets;
+
+impl WebAssets {
+    /// The file at `path`, relative to the embedded folder.
+    pub fn get(path: &str) -> Option<&'static [u8]> {
+        ASSETS
+            .binary_search_by(|(name, _)| (*name).cmp(path))
+            .ok()
+            .map(|at| ASSETS[at].1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `get` is a binary search, so it only finds every file while the table is sorted.
+    #[test]
+    fn every_embedded_file_is_found_with_its_own_bytes() {
+        for (name, bytes) in ASSETS {
+            assert_eq!(WebAssets::get(name), Some(*bytes), "{name}");
+        }
+        assert_eq!(WebAssets::get("no/such/file"), None);
+    }
+}

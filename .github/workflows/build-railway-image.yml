@@ -22,7 +22,7 @@ jobs:
           sudo docker image prune --all --force
           df -h /
 
-      # Compiling the web crate (it embeds the whole UI) runs out of the runner's 16 GB.
+      # Headroom for the final link steps on the runner's 16 GB.
       - name: Add swap
         run: |
           sudo swapoff -a
