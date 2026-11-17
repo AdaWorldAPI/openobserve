@@ -13,13 +13,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-//! ZITADEL login routes of the OSS build (`/config/dex_login`, `/config/redirect`,
-//! `/config/dex_refresh`), served only when `O2_ZITADEL_*` is configured.
-//!
-//! The policy is a floor for NEW accounts: a user that does not exist is created as an external
-//! user in the row's org with the row's role. An existing user keeps the role it has; one missing
-//! from the org is added with the row's role.
-
 use std::collections::HashMap;
 
 use axum::{
@@ -39,7 +32,7 @@ use config::{
     utils::{base64, json, rand::generate_random_string},
 };
 use db::user::is_root_user;
-use o2_zitadel::{Admitted, PolicyRole, STATE_KV_ORG};
+use o2_zitadel::{Admitted, PolicyRole, STATE_KV_ORG, pending_cap_reached, pending_expired};
 use openobserve_api_common::auth::validator::ID_TOKEN_HEADER;
 use openobserve_core::{kv, organization, session, users};
 
@@ -65,6 +58,17 @@ pub async fn login() -> Response {
             return login_state_unavailable();
         }
     };
+    match sweep_pending().await {
+        Ok(remaining) if !pending_cap_reached(remaining) => {}
+        Ok(_) => {
+            log::error!("zitadel pending logins are at the cap");
+            return login_state_unavailable();
+        }
+        Err(error) => {
+            log::error!("failed to sweep zitadel login state: {error}");
+            return login_state_unavailable();
+        }
+    }
     if let Err(error) = kv::set(STATE_KV_ORG, &started.state, started.pending.clone().into()).await
     {
         log::error!("failed to save zitadel login state: {error}");
@@ -267,6 +271,24 @@ async fn create_user(admitted: &Admitted, role: UserRole) -> Result<(), &'static
         log::error!("zitadel user could not be created: {error}");
         "provision"
     })
+}
+
+/// Delete expired pending logins; the count of those that remain.
+async fn sweep_pending() -> Result<usize, anyhow::Error> {
+    let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+    let mut remaining = 0;
+    for key in kv::list(STATE_KV_ORG, "").await? {
+        let expired = match kv::get_optional(STATE_KV_ORG, &key).await? {
+            Some(record) => pending_expired(&String::from_utf8_lossy(&record), now),
+            None => continue,
+        };
+        if expired {
+            kv::delete(STATE_KV_ORG, &key).await?;
+        } else {
+            remaining += 1;
+        }
+    }
+    Ok(remaining)
 }
 
 /// Take the pending login out of the store so exactly one callback can use it.

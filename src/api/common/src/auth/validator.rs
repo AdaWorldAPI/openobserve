@@ -772,6 +772,10 @@ pub async fn validate_credentials(
 
     // Enforce native login restrictions only for password-based authentication
     // (Token authentication has already been checked above)
+    #[cfg(feature = "zitadel")]
+    if password_auth_refused(o2_zitadel::password_policy(), is_root_user(user_id)) {
+        return Ok(TokenValidationResponse::default());
+    }
     #[cfg(feature = "enterprise")]
     {
         if !get_dex_config().native_login_enabled && !user.is_external {
@@ -1415,6 +1419,12 @@ async fn validate_zitadel_session(
     } else {
         Err(AuthError::RoleRefused("Unauthorized Access".to_string()))
     }
+}
+
+// Password auth on API calls obeys the same policy as `POST /auth/login`.
+#[cfg(feature = "zitadel")]
+fn password_auth_refused(policy: Option<(bool, bool)>, is_root: bool) -> bool {
+    !o2_zitadel::password_login_policy(policy, is_root)
 }
 
 async fn oo_validator_internal(
@@ -2541,6 +2551,30 @@ CN5lTowpVXP2OIiiNTGa75Fj
         assert!(
             oo_validator(&req_data, &forged).await.is_err(),
             "a marker naming no live session must be refused"
+        );
+    }
+
+    // Helper level: the policy is a process-wide OnceLock from env, so it cannot be switched on
+    // in-process without changing every other test's Basic auth.
+    #[cfg(feature = "zitadel")]
+    #[test]
+    fn test_password_auth_refused_follows_native_login_and_break_glass() {
+        assert!(!password_auth_refused(None, false), "inactive");
+        assert!(
+            !password_auth_refused(Some((true, false)), false),
+            "native on"
+        );
+        assert!(
+            !password_auth_refused(Some((false, true)), true),
+            "root break-glass"
+        );
+        assert!(
+            password_auth_refused(Some((false, true)), false),
+            "non-root"
+        );
+        assert!(
+            password_auth_refused(Some((false, false)), true),
+            "break-glass off"
         );
     }
 

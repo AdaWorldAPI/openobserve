@@ -26,8 +26,9 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use o2_zitadel::{
-    OidcHttp, PolicyRole, Refusal, SESSION_SCHEME, Zitadel, ZitadelConfig, config::parse_policy,
-    password_login_policy, session_auth, session_payload, state_matches,
+    LOGIN_TTL_SECS, MAX_PENDING_LOGINS, OidcHttp, PolicyRole, Refusal, SESSION_SCHEME, Zitadel,
+    ZitadelConfig, config::parse_policy, password_login_policy, pending_cap_reached,
+    pending_expired, session_auth, session_payload, state_matches,
 };
 use p256::ecdsa::{Signature, SigningKey, signature::Signer};
 use serde_json::{Value, json};
@@ -403,4 +404,29 @@ fn password_login_is_root_only_with_break_glass_once_native_login_is_off() {
         !password_login_policy(Some((false, false)), true),
         "break-glass off"
     );
+}
+
+#[test]
+fn pending_login_expires_at_the_ttl_and_unreadable_records_are_expired() {
+    let record = |created: u64| format!(r#"{{"verifier":"v","nonce":"n","created":{created}}}"#);
+    let now = 10_000;
+    assert!(!pending_expired(&record(now), now), "fresh");
+    assert!(
+        !pending_expired(&record(now - LOGIN_TTL_SECS + 1), now),
+        "just inside"
+    );
+    assert!(
+        pending_expired(&record(now - LOGIN_TTL_SECS), now),
+        "at the ttl"
+    );
+    assert!(pending_expired(&record(0), now), "old");
+    assert!(pending_expired("used", now), "consumed marker");
+    assert!(pending_expired("", now), "empty");
+}
+
+#[test]
+fn pending_login_cap_refuses_only_past_the_limit() {
+    assert!(!pending_cap_reached(0));
+    assert!(!pending_cap_reached(MAX_PENDING_LOGINS));
+    assert!(pending_cap_reached(MAX_PENDING_LOGINS + 1));
 }
