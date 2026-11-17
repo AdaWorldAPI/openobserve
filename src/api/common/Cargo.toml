@@ -21,6 +21,7 @@ enterprise = [
     "openobserve-core/enterprise",
     "usage_reporting/enterprise",
 ]
+zitadel = ["dep:o2_zitadel", "openobserve-core/zitadel"]
 cloud = [
     "enterprise",
     "o2_enterprise/cloud",
@@ -40,6 +41,7 @@ jsonwebtoken = { workspace = true, optional = true }
 log.workspace = true
 o2_dex = { workspace = true, optional = true }
 o2_enterprise = { workspace = true, optional = true, default-features = false }
+o2_zitadel = { workspace = true, optional = true }
 o2_openfga = { workspace = true, optional = true }
 openobserve-core.workspace = true
 regex.workspace = true

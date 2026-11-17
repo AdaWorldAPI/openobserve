@@ -7676,8 +7676,18 @@ version = "0.1.0"
 name = "o2_zitadel"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "log",
  "ogar-auth",
  "ogar-oidc",
+ "p256",
+ "rand 0.10.2",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "urlencoding",
 ]
 
 [[package]]
@@ -8240,6 +8250,7 @@ dependencies = [
  "o2_dex",
  "o2_enterprise",
  "o2_openfga",
+ "o2_zitadel",
  "openobserve-core",
  "regex",
  "serde",
@@ -8419,6 +8430,7 @@ dependencies = [
  "o2_dex",
  "o2_enterprise",
  "o2_openfga",
+ "o2_zitadel",
  "openobserve-api-common",
  "openobserve-builtins",
  "openobserve-cipher",
@@ -8604,6 +8616,7 @@ dependencies = [
  "o2_enterprise",
  "o2_openfga",
  "o2_ratelimit",
+ "o2_zitadel",
  "openobserve-node",
  "openobserve-synthetics",
  "opentelemetry",

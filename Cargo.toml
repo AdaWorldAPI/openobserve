@@ -49,6 +49,10 @@ cloud = [
     "openobserve-core/cloud",
     "openobserve-jobs/cloud",
 ]
+zitadel = [
+    "openobserve-api-http/zitadel",
+    "openobserve-core/zitadel",
+]
 mimalloc = ["dep:mimalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
 cpu-profiling = [
@@ -357,6 +361,7 @@ o2_dex = { path = "src/enterprise/o2_dex" }
 o2_enterprise = { path = "src/enterprise/o2_enterprise", default-features = false }
 o2_openfga = { path = "src/enterprise/o2_openfga" }
 o2_ratelimit = { path = "src/enterprise/o2_ratelimit" }
+o2_zitadel = { path = "src/zitadel" }
 aes-siv = "0.7.0"
 ahash = { version = "0.8", features = ["serde"] }
 axum = { version = "0.8", features = ["macros", "multipart", "tracing"] }

@@ -98,6 +98,8 @@ pub mod synthetics;
 pub mod users;
 #[cfg(feature = "enterprise")]
 pub mod workflows;
+#[cfg(feature = "zitadel")]
+pub mod zitadel;
 
 #[cfg(feature = "cloud")]
 pub mod org_domains;

@@ -760,6 +760,11 @@ pub async fn authentication(
         audit_message.user_email = auth.name.clone();
     }
 
+    #[cfg(feature = "zitadel")]
+    if !o2_zitadel::password_login_allowed(db::user::is_root_user(&auth.name)) {
+        return unauthorized_error(resp);
+    }
+
     #[cfg(feature = "enterprise")]
     {
         if get_dex_config().root_only_login && !db::user::is_root_user(&auth.name) {

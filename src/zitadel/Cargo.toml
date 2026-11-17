@@ -6,5 +6,17 @@ license.workspace = true
 publish = false
 
 [dependencies]
+base64.workspace = true
+log.workspace = true
 ogar-auth = { git = "https://github.com/AdaWorldAPI/OGAR", branch = "main" }
 ogar-oidc = { git = "https://github.com/AdaWorldAPI/OGAR", branch = "main" }
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+urlencoding.workspace = true
+
+[dev-dependencies]
+p256 = { git = "https://github.com/AdaWorldAPI/elliptic-curves", branch = "master", default-features = false, features = ["ecdsa", "alloc"] }
+tokio.workspace = true

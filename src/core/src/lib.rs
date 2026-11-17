@@ -100,6 +100,10 @@ pub mod workflows;
 pub mod org_domain_ownership;
 #[cfg(feature = "cloud")]
 pub mod org_domain_requests;
+#[cfg(all(feature = "enterprise", feature = "zitadel"))]
+compile_error!(
+    "features `enterprise` and `zitadel` are exclusive: ZITADEL login is the OSS build only"
+);
 /// One authorized AI operation, or `()` in builds without the quota module, so
 /// the RCA signature keeps one shape instead of being cfg-gated at every caller.
 #[cfg(feature = "cloud")]

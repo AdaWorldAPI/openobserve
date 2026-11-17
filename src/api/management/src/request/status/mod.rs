@@ -460,7 +460,12 @@ pub async fn zo_config_bootstrap() -> impl IntoResponse {
     #[cfg(feature = "enterprise")]
     let block_features = block_feature_for_report_failure().await;
 
+    #[cfg(feature = "zitadel")]
+    let (sso_enabled, native_login_enabled) =
+        (o2_zitadel::active(), o2_zitadel::native_login_enabled());
+    #[cfg(not(feature = "zitadel"))]
     let sso_enabled = enterprise_value!(false, dex_cfg.dex_enabled, block_features);
+    #[cfg(not(feature = "zitadel"))]
     let native_login_enabled = enterprise_value!(true, dex_cfg.native_login_enabled);
     let custom_logo_text = enterprise_value!(
         "".to_string(),
@@ -538,7 +543,12 @@ pub async fn zo_config(
     #[cfg(feature = "enterprise")]
     let block_features = block_feature_for_report_failure().await;
 
+    #[cfg(feature = "zitadel")]
+    let (sso_enabled, native_login_enabled) =
+        (o2_zitadel::active(), o2_zitadel::native_login_enabled());
+    #[cfg(not(feature = "zitadel"))]
     let sso_enabled = enterprise_value!(false, dex_cfg.dex_enabled, block_features);
+    #[cfg(not(feature = "zitadel"))]
     let native_login_enabled = enterprise_value!(true, dex_cfg.native_login_enabled);
     let service_account_enabled = cfg.auth.service_account_enabled;
     let rbac_enabled = enterprise_value!(false, openfga_cfg.enabled);
