@@ -542,8 +542,6 @@ impl Writer {
             if batch_entry.data.num_rows() == 0 {
                 continue;
             }
-            #[cfg(feature = "substrate")]
-            shadow_append(&self.key.stream_type, &entry, &batch_entry.data);
             mem.write(entry.schema.clone().unwrap(), entry, batch_entry)?;
             tokio::task::coop::consume_budget().await;
         }
@@ -747,15 +745,6 @@ impl WriterKey {
 impl MemorySize for WriterKey {
     fn mem_size(&self) -> usize {
         std::mem::size_of::<WriterKey>() + self.org_id.len() + self.stream_type.len()
-    }
-}
-
-/// Mirrors a row batch into the substrate's shadow copy; a refusal never fails the write.
-#[cfg(feature = "substrate")]
-fn shadow_append(stream_type: &str, entry: &Entry, batch: &arrow::array::RecordBatch) {
-    let key = o2_substrate::StreamKey::new(&entry.org_id, stream_type, &entry.stream);
-    if let Some(refusal) = o2_substrate::append(&key, batch) {
-        log::debug!("[INGESTER:SUBSTRATE] {key:?} batch has no lanes: {refusal:?}");
     }
 }
 

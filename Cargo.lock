@@ -6129,7 +6129,6 @@ dependencies = [
  "indexmap 2.14.0",
  "infra",
  "log",
- "o2_substrate",
  "parquet",
  "serde",
  "serde_json",
