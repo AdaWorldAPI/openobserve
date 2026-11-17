@@ -17,9 +17,9 @@ WORKDIR /openobserve
 COPY . /openobserve
 COPY --from=webbuilder /web/dist web/dist
 RUN rustup show active-toolchain || rustup toolchain install
-# The uncached build was stopped after 90 minutes on Railway. The caches keep crates
-# across builds and 16 codegen units spread the large final crates over more cores.
-ENV CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+# The caches keep crates across builds. 16 codegen units ran the web crate out of memory,
+# so the profile's own 4 apply.
+ENV CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_INCREMENTAL=0
 RUN --mount=type=cache,id=s/b88f4d4d-1aa6-44da-83a1-d7216048709a-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=s/b88f4d4d-1aa6-44da-83a1-d7216048709a-target,target=/openobserve/target \
     cargo build --release --features zitadel && \
