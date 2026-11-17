@@ -8285,6 +8285,7 @@ dependencies = [
  "http 1.5.0",
  "http-auth-basic",
  "infra",
+ "ingester",
  "ingestion-common",
  "log",
  "o2_enterprise",
@@ -8302,6 +8303,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tonic-tracing-opentelemetry",
+ "tower",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -8329,6 +8331,7 @@ dependencies = [
  "http-body 1.1.0",
  "http-body-util",
  "infra",
+ "ingester",
  "ingestion-common",
  "jsonschema 0.38.1",
  "log",
@@ -8345,6 +8348,7 @@ dependencies = [
  "openobserve-synthetics",
  "openobserve-tls",
  "opentelemetry-proto",
+ "prost 0.14.4",
  "rand 0.10.2",
  "regex",
  "reqwest 0.13.4",
@@ -8379,6 +8383,7 @@ dependencies = [
  "config",
  "db",
  "flate2",
+ "futures",
  "hashbrown 0.17.1",
  "http-body-util",
  "infra",
@@ -8450,6 +8455,7 @@ dependencies = [
  "search_service",
  "serde",
  "serde_json",
+ "sqlparser",
  "stream",
  "svix-ksuid",
  "time",
@@ -8470,6 +8476,7 @@ version = "0.1.0"
 dependencies = [
  "ahash 0.8.12",
  "anyhow",
+ "arrow-schema",
  "axum",
  "chrono",
  "common",
@@ -8489,6 +8496,7 @@ dependencies = [
  "serde_json",
  "stream",
  "tokio",
+ "tower",
  "tracing",
  "transform",
  "url",
@@ -10330,9 +10338,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.15"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35a133f956daabe89a61a685c2649f13d82d5aa4bd5d12d1277e1072a21c0694"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
  "cfg_aliases",
  "libc",
