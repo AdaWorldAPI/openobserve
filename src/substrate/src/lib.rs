@@ -29,58 +29,56 @@ const LIVE: Mask = Mask(0);
 /// OpenObserve's event-time column, microseconds since the epoch.
 pub const TIMESTAMP: &str = "_timestamp";
 const US_PER_MS: i64 = 1_000;
-/// Lanes and planes are addressed by 16-bit ids.
-const MAX_IDS: usize = u16::MAX as usize + 1;
+/// A lane is addressed by a 16-bit column id.
+const MAX_COLUMNS: usize = u16::MAX as usize + 1;
 
 /// One stream batch as coded lanes: text columns are dictionary codes, integers are `i32`.
 pub struct LaneTable {
     rows: usize,
-    columns: Vec<Column>,
+    names: Vec<String>,
     lanes: Vec<Lane>,
-    /// Plane 0 is the live plane; a nullable column's validity plane follows.
-    planes: Vec<Vec<u64>>,
-    nullable: Vec<(Col, Mask)>,
+    live: Vec<u64>,
 }
 
 impl LaneTable {
-    /// Refuses a column type or a value that has no lane, never truncates it.
+    /// Refuses a column type or an integer that has no lane, never truncates it.
     pub fn from_batch(batch: &RecordBatch) -> Result<Self, Refusal> {
         let rows = batch.num_rows();
-        let mut table = Self {
-            rows,
-            columns: Vec::with_capacity(batch.num_columns()),
-            lanes: Vec::with_capacity(batch.num_columns()),
-            planes: vec![ones(rows)],
-            nullable: Vec::new(),
-        };
-        for (field, column) in batch.schema().fields().iter().zip(batch.columns()) {
-            let name = field.name();
-            let kind = match field.data_type() {
-                DataType::Utf8 => table.push_text(column),
-                DataType::Int64 if name == TIMESTAMP => table.push_time(column)?,
-                DataType::Int64 => table.push_int(name, column)?,
-                other => return Err(Refusal::Type(name.clone(), other.clone())),
-            };
-            if column.null_count() != 0 {
-                table.push_validity(name, &kind, column)?;
-            }
-            table.columns.push(Column {
-                name: name.clone(),
-                kind,
-            });
-            if table.lanes.len() > MAX_IDS || table.planes.len() > MAX_IDS {
-                return Err(Refusal::Columns(batch.num_columns()));
-            }
+        let schema = batch.schema();
+        if batch.num_columns() > MAX_COLUMNS {
+            return Err(Refusal::Columns(batch.num_columns()));
         }
-        Ok(table)
+        let mut names = Vec::with_capacity(batch.num_columns());
+        let mut lanes = Vec::with_capacity(batch.num_columns());
+        for (field, column) in schema.fields().iter().zip(batch.columns()) {
+            if column.null_count() != 0 {
+                return Err(Refusal::Null(field.name().clone()));
+            }
+            let lane = match field.data_type() {
+                DataType::Utf8 => text_lane(column),
+                DataType::Int64 if field.name() == TIMESTAMP => time_lane(column)?,
+                DataType::Int64 => int_lane(field.name(), column)?,
+                other => return Err(Refusal::Type(field.name().clone(), other.clone())),
+            };
+            names.push(field.name().clone());
+            lanes.push(lane);
+        }
+        let mut live = vec![u64::MAX; words_for(rows)];
+        if let Some(last) = live.last_mut()
+            && rows % 64 != 0
+        {
+            *last = (1u64 << (rows % 64)) - 1;
+        }
+        Ok(Self {
+            rows,
+            names,
+            lanes,
+            live,
+        })
     }
 
     pub fn rows(&self) -> usize {
         self.rows
-    }
-
-    pub fn all(&self) -> Filter {
-        Filter::plane(LIVE)
     }
 
     /// A text the column never held matches no row, so the term is empty, not an error.
@@ -100,16 +98,10 @@ impl LaneTable {
         Ok(Filter::cmp(self.int(column)?, Cmp::NeI32(value)))
     }
 
-    /// Event time in `[start_us, end_us)`.
-    pub fn time_range(&self, start_us: i64, end_us: i64) -> Result<Filter, Refusal> {
-        let time = self.time()?;
-        Ok(Filter::and([
-            time.at_or_after(start_us),
-            Filter::negate(time.at_or_after(end_us)),
-        ]))
+    pub fn all(&self) -> Filter {
+        Filter::plane(LIVE)
     }
 
-    /// Rows the filter holds for under SQL three-valued logic: a NULL operand is not a match.
     pub fn count(&self, filter: Filter) -> Result<usize, Refusal> {
         match self.run(filter, Agg::Count)? {
             Value::Count(n) => Ok(n),
@@ -118,34 +110,21 @@ impl LaneTable {
     }
 
     pub fn sum(&self, filter: Filter, column: &str) -> Result<i64, Refusal> {
-        let col = self.int(column)?;
-        match self.run(self.where_present(filter, col), Agg::SumI32(col))? {
+        match self.run(filter, Agg::SumI32(self.int(column)?))? {
             Value::SumI64(n) => Ok(n),
             other => Err(Refusal::Answer(format!("{other:?}"))),
         }
     }
 
     pub fn min(&self, filter: Filter, column: &str) -> Result<Option<i32>, Refusal> {
-        let col = self.int(column)?;
-        self.extreme(self.where_present(filter, col), Agg::MinI32(col))
+        self.extreme(filter, Agg::MinI32(self.int(column)?))
     }
 
     pub fn max(&self, filter: Filter, column: &str) -> Result<Option<i32>, Refusal> {
-        let col = self.int(column)?;
-        self.extreme(self.where_present(filter, col), Agg::MaxI32(col))
+        self.extreme(filter, Agg::MaxI32(self.int(column)?))
     }
 
-    /// `None` when no row with a value passes, as SQL `AVG` over no values is NULL.
-    pub fn avg(&self, filter: Filter, column: &str) -> Result<Option<f64>, Refusal> {
-        let col = self.int(column)?;
-        let rows = self.count(self.where_present(filter.clone(), col))?;
-        if rows == 0 {
-            return Ok(None);
-        }
-        Ok(Some(self.sum(filter, column)? as f64 / rows as f64))
-    }
-
-    /// Rows per distinct text of `column`, in the order the texts first appeared; NULL has none.
+    /// Rows per distinct text of `column`, in the order the texts first appeared.
     pub fn count_by_text(&self, column: &str) -> Result<Vec<(String, usize)>, Refusal> {
         let (col, dict) = self.text(column)?;
         (0..dict.len() as u32)
@@ -156,112 +135,41 @@ impl LaneTable {
             .collect()
     }
 
+    /// `None` when no row passes, as SQL `AVG` over no rows is NULL.
+    pub fn avg(&self, filter: Filter, column: &str) -> Result<Option<f64>, Refusal> {
+        let rows = self.count(filter.clone())?;
+        if rows == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.sum(filter, column)? as f64 / rows as f64))
+    }
+
     /// Rows per `width_us` bucket of event time, as `(bucket start, rows)`; empty buckets are
     /// left out, and buckets align to the epoch as SQL `histogram` does.
     pub fn count_by_time(&self, width_us: i64) -> Result<Vec<(i64, usize)>, Refusal> {
-        if width_us <= 0 {
+        let (col, offsets, base_us) = self.time()?;
+        if width_us <= 0 || width_us % US_PER_MS != 0 {
             return Err(Refusal::Precision(TIMESTAMP.to_string(), width_us));
         }
-        let time = self.time()?;
-        let Some(end_us) = time.last_us(&self.lanes) else {
+        let Some(&last) = offsets.iter().max() else {
             return Ok(Vec::new());
         };
-        let mut start_us = time.base_us.div_euclid(width_us) * width_us;
+        let end_us = base_us + i64::from(last) * US_PER_MS;
+        let mut start_us = base_us.div_euclid(width_us) * width_us;
         let mut buckets = Vec::new();
         while start_us <= end_us {
-            let rows = self.count(self.time_range(start_us, start_us + width_us)?)?;
+            let lo = to_offset_ms(start_us - base_us);
+            let hi = to_offset_ms(start_us + width_us - base_us);
+            let rows = self.count(Filter::and([
+                Filter::cmp(col, Cmp::GeI32(lo)),
+                Filter::cmp(col, Cmp::LtI32(hi)),
+            ]))?;
             if rows != 0 {
                 buckets.push((start_us, rows));
             }
             start_us += width_us;
         }
         Ok(buckets)
-    }
-
-    fn push_text(&mut self, column: &Arc<dyn Array>) -> Kind {
-        let texts = column
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Utf8 column is a StringArray");
-        let mut dict = Dict::default();
-        let codes = texts
-            .iter()
-            .map(|text| text.map_or(0, |t| dict.intern(t)))
-            .collect();
-        self.lanes.push(Lane::U32(codes));
-        Kind::Text {
-            lane: self.lanes.len() - 1,
-            dict,
-        }
-    }
-
-    fn push_int(&mut self, name: &str, column: &Arc<dyn Array>) -> Result<Kind, Refusal> {
-        let ints = int64(column);
-        let values = (0..ints.len())
-            .map(|row| {
-                if ints.is_null(row) {
-                    return Ok(0);
-                }
-                let v = ints.value(row);
-                i32::try_from(v).map_err(|_| Refusal::Range(name.to_string(), v))
-            })
-            .collect::<Result<Vec<i32>, Refusal>>()?;
-        self.lanes.push(Lane::I32(values));
-        Ok(Kind::Int {
-            lane: self.lanes.len() - 1,
-        })
-    }
-
-    fn push_time(&mut self, column: &Arc<dyn Array>) -> Result<Kind, Refusal> {
-        let times = int64(column);
-        if times.null_count() != 0 {
-            return Err(Refusal::Null(TIMESTAMP.to_string()));
-        }
-        let base_us = times.values().iter().copied().min().unwrap_or(0);
-        let mut whole_ms = Vec::with_capacity(times.len());
-        let mut rest_us = Vec::with_capacity(times.len());
-        for &us in times.values() {
-            let offset = us - base_us;
-            let ms = i32::try_from(offset / US_PER_MS)
-                .map_err(|_| Refusal::Precision(TIMESTAMP.to_string(), us))?;
-            whole_ms.push(ms);
-            rest_us.push((offset % US_PER_MS) as i32);
-        }
-        self.lanes.push(Lane::I32(whole_ms));
-        self.lanes.push(Lane::I32(rest_us));
-        Ok(Kind::Time(TimeLanes {
-            whole_ms: self.lanes.len() - 2,
-            rest_us: self.lanes.len() - 1,
-            base_us,
-        }))
-    }
-
-    fn push_validity(
-        &mut self,
-        name: &str,
-        kind: &Kind,
-        column: &Arc<dyn Array>,
-    ) -> Result<(), Refusal> {
-        let lane = match kind {
-            Kind::Text { lane, .. } | Kind::Int { lane } => *lane,
-            Kind::Time(_) => return Err(Refusal::Null(name.to_string())),
-        };
-        let mut valid = vec![0u64; words_for(self.rows)];
-        for row in (0..self.rows).filter(|&row| column.is_valid(row)) {
-            valid[row / 64] |= 1 << (row % 64);
-        }
-        self.planes.push(valid);
-        self.nullable
-            .push((Col(lane as u16), Mask((self.planes.len() - 1) as u16)));
-        Ok(())
-    }
-
-    /// `filter` narrowed to the rows where `col` holds a value, as SQL aggregates skip NULL.
-    fn where_present(&self, filter: Filter, col: Col) -> Filter {
-        match self.nullable.iter().find(|(c, _)| *c == col) {
-            Some((_, valid)) => Filter::and([filter, Filter::is_not_null(*valid)]),
-            None => filter,
-        }
     }
 
     fn extreme(&self, filter: Filter, agg: Agg) -> Result<Option<i32>, Refusal> {
@@ -272,11 +180,10 @@ impl LaneTable {
     }
 
     fn run(&self, filter: Filter, agg: Agg) -> Result<Value, Refusal> {
-        let filter = filter.sql_where(&self.nullable);
         let program =
             lower(&Query { filter, agg }).map_err(|e| Refusal::Lower(format!("{e:?}")))?;
         let lanes: Vec<LaneRef<'_>> = self.lanes.iter().map(Lane::borrow).collect();
-        let masks: Vec<&[u64]> = self.planes.iter().map(Vec::as_slice).collect();
+        let masks: [&[u64]; 1] = [&self.live];
         let planes = Planes {
             n_rows: self.rows,
             masks: &masks,
@@ -287,99 +194,60 @@ impl LaneTable {
         execute(&program, &planes, &mut scratch, None).map_err(|e| Refusal::Run(format!("{e:?}")))
     }
 
-    fn column(&self, name: &str) -> Result<&Kind, Refusal> {
-        self.columns
+    fn position(&self, column: &str) -> Result<usize, Refusal> {
+        self.names
             .iter()
-            .find(|c| c.name == name)
-            .map(|c| &c.kind)
-            .ok_or_else(|| Refusal::Column(name.to_string()))
+            .position(|n| n == column)
+            .ok_or_else(|| Refusal::Column(column.to_string()))
     }
 
     fn text(&self, column: &str) -> Result<(Col, &Dict), Refusal> {
-        match self.column(column)? {
-            Kind::Text { lane, dict } => Ok((Col(*lane as u16), dict)),
+        let i = self.position(column)?;
+        match &self.lanes[i] {
+            Lane::Text { dict, .. } => Ok((Col(i as u16), dict)),
             _ => Err(Refusal::Kind(column.to_string())),
         }
     }
 
     fn int(&self, column: &str) -> Result<Col, Refusal> {
-        match self.column(column)? {
-            Kind::Int { lane } => Ok(Col(*lane as u16)),
+        let i = self.position(column)?;
+        match &self.lanes[i] {
+            Lane::Int(_) => Ok(Col(i as u16)),
             _ => Err(Refusal::Kind(column.to_string())),
         }
     }
 
-    fn time(&self) -> Result<&TimeLanes, Refusal> {
-        match self.column(TIMESTAMP)? {
-            Kind::Time(time) => Ok(time),
+    fn time(&self) -> Result<(Col, &[i32], i64), Refusal> {
+        let i = self.position(TIMESTAMP)?;
+        match &self.lanes[i] {
+            Lane::Time {
+                offsets_ms,
+                base_us,
+            } => Ok((Col(i as u16), offsets_ms, *base_us)),
             _ => Err(Refusal::Kind(TIMESTAMP.to_string())),
         }
     }
 }
 
-struct Column {
-    name: String,
-    kind: Kind,
-}
-
-enum Kind {
-    Text { lane: usize, dict: Dict },
-    Int { lane: usize },
-    Time(TimeLanes),
-}
-
-/// Event time split so each part fits a signed 32-bit lane: whole milliseconds after
-/// `base_us`, and the microseconds left over (0..1000).
-struct TimeLanes {
-    whole_ms: usize,
-    rest_us: usize,
-    base_us: i64,
-}
-
-impl TimeLanes {
-    fn at_or_after(&self, us: i64) -> Filter {
-        let offset = us - self.base_us;
-        let Ok(ms) = i32::try_from(offset.div_euclid(US_PER_MS)) else {
-            return if offset < 0 {
-                Filter::plane(LIVE)
-            } else {
-                Filter::negate(Filter::plane(LIVE))
-            };
-        };
-        let rest = offset.rem_euclid(US_PER_MS) as i32;
-        let whole = Col(self.whole_ms as u16);
-        Filter::or([
-            Filter::cmp(whole, Cmp::GtI32(ms)),
-            Filter::and([
-                Filter::cmp(whole, Cmp::EqI32(ms)),
-                Filter::cmp(Col(self.rest_us as u16), Cmp::GeI32(rest)),
-            ]),
-        ])
-    }
-
-    fn last_us(&self, lanes: &[Lane]) -> Option<i64> {
-        let (Lane::I32(whole), Lane::I32(rest)) = (&lanes[self.whole_ms], &lanes[self.rest_us])
-        else {
-            return None;
-        };
-        whole
-            .iter()
-            .zip(rest)
-            .map(|(&ms, &us)| self.base_us + i64::from(ms) * US_PER_MS + i64::from(us))
-            .max()
-    }
-}
-
 enum Lane {
-    U32(Vec<u32>),
-    I32(Vec<i32>),
+    Text {
+        codes: Vec<u32>,
+        dict: Dict,
+    },
+    Int(Vec<i32>),
+    /// Milliseconds after `base_us`, so an ordered compare fits the signed 32-bit lane.
+    Time {
+        offsets_ms: Vec<i32>,
+        base_us: i64,
+    },
 }
 
 impl Lane {
     fn borrow(&self) -> LaneRef<'_> {
         match self {
-            Lane::U32(values) => LaneRef::U32(values),
-            Lane::I32(values) => LaneRef::I32(values),
+            Lane::Text { codes, .. } => LaneRef::U32(codes),
+            Lane::Int(values) => LaneRef::I32(values),
+            Lane::Time { offsets_ms, .. } => LaneRef::I32(offsets_ms),
         }
     }
 }
@@ -388,13 +256,12 @@ impl Lane {
 #[derive(Debug, PartialEq)]
 pub enum Refusal {
     Type(String, DataType),
-    /// A NULL where the lane has no validity plane: event time.
     Null(String),
     Range(String, i64),
-    /// A time span or bucket width the lanes cannot hold.
+    /// A time finer than the millisecond lane, or a span or width it cannot hold.
     Precision(String, i64),
     Column(String),
-    /// More lanes or planes than a 16-bit id addresses.
+    /// More columns than a lane id addresses.
     Columns(usize),
     Kind(String),
     Lower(String),
@@ -402,19 +269,53 @@ pub enum Refusal {
     Answer(String),
 }
 
-fn int64(column: &Arc<dyn Array>) -> &Int64Array {
-    column
+fn text_lane(column: &Arc<dyn Array>) -> Lane {
+    let texts = column
         .as_any()
-        .downcast_ref::<Int64Array>()
-        .expect("Int64 column is an Int64Array")
+        .downcast_ref::<StringArray>()
+        .expect("Utf8 column is a StringArray");
+    let mut dict = Dict::default();
+    let codes = texts.iter().flatten().map(|t| dict.intern(t)).collect();
+    Lane::Text { codes, dict }
 }
 
-fn ones(rows: usize) -> Vec<u64> {
-    let mut plane = vec![u64::MAX; words_for(rows)];
-    if let Some(last) = plane.last_mut()
-        && rows % 64 != 0
-    {
-        *last = (1u64 << (rows % 64)) - 1;
-    }
-    plane
+fn int_lane(name: &str, column: &Arc<dyn Array>) -> Result<Lane, Refusal> {
+    let ints = column
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("Int64 column is an Int64Array");
+    ints.values()
+        .iter()
+        .map(|&v| i32::try_from(v).map_err(|_| Refusal::Range(name.to_string(), v)))
+        .collect::<Result<Vec<i32>, Refusal>>()
+        .map(Lane::Int)
+}
+
+fn time_lane(column: &Arc<dyn Array>) -> Result<Lane, Refusal> {
+    let times = column
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("Int64 column is an Int64Array");
+    let base_us = times.values().iter().copied().min().unwrap_or(0);
+    times
+        .values()
+        .iter()
+        .map(|&us| {
+            let offset = us - base_us;
+            if offset % US_PER_MS != 0 {
+                return Err(Refusal::Precision(TIMESTAMP.to_string(), us));
+            }
+            i32::try_from(offset / US_PER_MS)
+                .map_err(|_| Refusal::Precision(TIMESTAMP.to_string(), us))
+        })
+        .collect::<Result<Vec<i32>, Refusal>>()
+        .map(|offsets_ms| Lane::Time {
+            offsets_ms,
+            base_us,
+        })
+}
+
+/// Saturates: a bound past the lane's range still compares correctly against every offset.
+fn to_offset_ms(offset_us: i64) -> i32 {
+    (offset_us.div_euclid(US_PER_MS)).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }

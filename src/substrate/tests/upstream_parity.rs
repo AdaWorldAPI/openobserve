@@ -182,126 +182,32 @@ fn time_buckets_and_grouped_answers_equal_the_upstream_capture() {
     assert_eq!(rows, 300, "the upstream groups cover every row");
 }
 
-fn times(values: Vec<i64>) -> RecordBatch {
-    RecordBatch::try_new(
-        Arc::new(Schema::new(vec![Field::new(
-            TIMESTAMP,
-            DataType::Int64,
-            false,
-        )])),
-        vec![Arc::new(Int64Array::from(values))],
-    )
-    .unwrap()
-}
-
 #[test]
-fn a_time_the_lanes_cannot_hold_is_refused() {
+fn a_time_the_lane_cannot_hold_is_refused() {
+    let batch = |times: Vec<i64>| {
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new(
+                TIMESTAMP,
+                DataType::Int64,
+                false,
+            )])),
+            vec![Arc::new(Int64Array::from(times))],
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        LaneTable::from_batch(&batch(vec![BASE_US, BASE_US + 1])).err(),
+        Some(Refusal::Precision(TIMESTAMP.to_string(), BASE_US + 1))
+    );
     let far = BASE_US + (i64::from(i32::MAX) + 1) * 1_000;
     assert_eq!(
-        LaneTable::from_batch(&times(vec![BASE_US, far])).err(),
+        LaneTable::from_batch(&batch(vec![BASE_US, far])).err(),
         Some(Refusal::Precision(TIMESTAMP.to_string(), far))
     );
-    let table = LaneTable::from_batch(&times(vec![BASE_US])).unwrap();
+    let table = LaneTable::from_batch(&batch(vec![BASE_US])).unwrap();
     assert_eq!(
-        table.count_by_time(0).err(),
-        Some(Refusal::Precision(TIMESTAMP.to_string(), 0))
-    );
-}
-
-/// Microsecond times are kept exactly: a range bound one microsecond off moves one row.
-#[test]
-fn event_time_is_exact_to_the_microsecond() {
-    let at = |ms: i64, us: i64| BASE_US + ms * 1_000 + us;
-    let table = LaneTable::from_batch(&times(vec![
-        at(0, 0),
-        at(0, 999),
-        at(1, 0),
-        at(1, 1),
-        at(7, 500),
-    ]))
-    .unwrap();
-    let count = |start, end| table.count(table.time_range(start, end).unwrap()).unwrap();
-
-    assert_eq!(count(at(0, 0), at(1, 0)), 2);
-    assert_eq!(count(at(0, 1), at(1, 0)), 1);
-    assert_eq!(count(at(0, 0), at(1, 1)), 3);
-    assert_eq!(count(at(1, 1), at(1, 2)), 1);
-    assert_eq!(count(i64::MIN / 2, i64::MAX / 2), 5);
-    assert_eq!(count(at(8, 0), i64::MAX / 2), 0);
-    assert_eq!(
-        table.count_by_time(1_000).unwrap(),
-        vec![(at(0, 0), 2), (at(1, 0), 2), (at(7, 0), 1)]
-    );
-    assert_eq!(table.count_by_time(500).unwrap().len(), 4);
-}
-
-/// SQL three-valued logic: a NULL operand matches neither a comparison nor its negation.
-#[test]
-fn null_is_neither_equal_nor_not_equal() {
-    let batch = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![
-            Field::new("level", DataType::Utf8, true),
-            Field::new("status", DataType::Int64, true),
-        ])),
-        vec![
-            Arc::new(StringArray::from(vec![
-                Some("a"),
-                None,
-                Some("b"),
-                Some("a"),
-                None,
-                Some("a"),
-            ])),
-            Arc::new(Int64Array::from(vec![
-                Some(200),
-                None,
-                Some(404),
-                None,
-                Some(0),
-                Some(200),
-            ])),
-        ],
-    )
-    .unwrap();
-    let table = LaneTable::from_batch(&batch).unwrap();
-    let a = || table.eq_text("level", "a").unwrap();
-
-    assert_eq!(table.count(table.all()).unwrap(), 6);
-    assert_eq!(table.count(a()).unwrap(), 3);
-    assert_eq!(table.count(Filter::negate(a())).unwrap(), 1);
-    assert_eq!(table.count(table.eq_int("status", 0).unwrap()).unwrap(), 1);
-    assert_eq!(
-        table.count(table.ne_int("status", 200).unwrap()).unwrap(),
-        2
-    );
-    assert_eq!(
-        table.count_by_text("level").unwrap(),
-        vec![("a".to_string(), 3), ("b".to_string(), 1)]
-    );
-
-    assert_eq!(table.sum(table.all(), "status").unwrap(), 804);
-    assert_eq!(table.min(table.all(), "status").unwrap(), Some(0));
-    assert_eq!(table.avg(table.all(), "status").unwrap(), Some(201.0));
-    assert_eq!(table.avg(a(), "status").unwrap(), Some(200.0));
-    assert_eq!(
-        table
-            .avg(table.eq_text("level", "none").unwrap(), "status")
-            .unwrap(),
-        None
-    );
-
-    let null_time = RecordBatch::try_new(
-        Arc::new(Schema::new(vec![Field::new(
-            TIMESTAMP,
-            DataType::Int64,
-            true,
-        )])),
-        vec![Arc::new(Int64Array::from(vec![Some(BASE_US), None]))],
-    )
-    .unwrap();
-    assert_eq!(
-        LaneTable::from_batch(&null_time).err(),
-        Some(Refusal::Null(TIMESTAMP.to_string()))
+        table.count_by_time(1_500).err(),
+        Some(Refusal::Precision(TIMESTAMP.to_string(), 1_500))
     );
 }
 
