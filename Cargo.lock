@@ -6599,18 +6599,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "lance-graph-dir-sim"
+name = "lance-graph-dt64"
 version = "0.1.0"
 source = "git+https://github.com/AdaWorldAPI/lance-graph?branch=main#469a866eea1535a16449043ec142c33d8dca29d7"
 dependencies = [
- "lance-graph-mask-risc",
- "lance-graph-quack",
- "ogar-ad",
- "ogar-az",
- "ogar-dir-core",
- "ogar-dir-sim",
- "unicase",
- "unicode-normalization",
+ "lance-graph-contract",
 ]
 
 [[package]]
@@ -7329,7 +7322,7 @@ checksum = "a8afc6df942f4c022d70c5725e18df1a705773870e5b7f96fde94ca0334ce77a"
 [[package]]
 name = "ndarray"
 version = "0.17.2"
-source = "git+https://github.com/AdaWorldAPI/ndarray?branch=master#bf112d20b212fd68ccba10c59a65fd058de14166"
+source = "git+https://github.com/AdaWorldAPI/ndarray?branch=master#c790bd9b8ac3cd722138b6319e812858913ffda3"
 dependencies = [
  "matrixmultiply",
  "num-complex",
@@ -7709,7 +7702,8 @@ name = "o2_substrate"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "lance-graph-dir-sim",
+ "lance-graph-contract",
+ "lance-graph-dt64",
  "lance-graph-mask-risc",
  "lance-graph-quack",
  "serde_json",
@@ -8018,14 +8012,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ogar-ad"
-version = "0.1.0"
-source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
-dependencies = [
- "ogar-dir-core",
-]
-
-[[package]]
 name = "ogar-auth"
 version = "0.1.0"
 source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
@@ -8040,28 +8026,6 @@ dependencies = [
  "md-5 0.10.6",
  "ogar-encryption",
  "sha1 0.10.7",
-]
-
-[[package]]
-name = "ogar-az"
-version = "0.1.0"
-source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
-dependencies = [
- "ogar-dir-core",
- "serde_json",
-]
-
-[[package]]
-name = "ogar-dir-core"
-version = "0.1.0"
-source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
-
-[[package]]
-name = "ogar-dir-sim"
-version = "0.1.0"
-source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
-dependencies = [
- "ogar-dir-core",
 ]
 
 [[package]]
