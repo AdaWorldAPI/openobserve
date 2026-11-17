@@ -243,7 +243,11 @@ export default defineComponent({
 
     // The server refused this user's organizations, so the session ends as an expired one does: the drafts stay for the next login.
     const signout = () => {
-      if (config?.isEnterprise == "true" || config?.isCloud == "true") {
+      if (
+        config?.isEnterprise == "true" ||
+        config?.isCloud == "true" ||
+        store.state.zoConfig?.sso_enabled
+      ) {
         invalidateLoginData();
       }
       // A reload here could re-run the login callback, so this goes to the login page instead.
@@ -371,7 +375,8 @@ export default defineComponent({
           if (
             (this.userInfo !== null &&
               Object.prototype.hasOwnProperty.call(this.userInfo, "pgdata")) ||
-            config.isEnterprise === "true"
+            config.isEnterprise === "true" ||
+            data?.sso_enabled
           ) {
             this.store.dispatch("login", {
               loginState: true,

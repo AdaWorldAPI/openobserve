@@ -63,7 +63,7 @@ export const attemptTokenRefresh = (requestUrl: string = ""): Promise<void> => {
     return Promise.reject(new Error("Cloud environment: direct logout"));
   }
 
-  if (config.isEnterprise == "true" && (store.state as any).zoConfig.sso_enabled) {
+  if ((store.state as any).zoConfig.sso_enabled) {
     if (!refreshPromise) {
       const refreshInstance = axios.create({
         withCredentials: true,
@@ -179,10 +179,7 @@ const http = ({ headers } = {} as any) => {
               recordRefusal(error);
               return Promise.reject(error);
             }
-            const sso =
-              config.isCloud != "true" &&
-              config.isEnterprise == "true" &&
-              (store.state as any).zoConfig.sso_enabled;
+            const sso = config.isCloud != "true" && (store.state as any).zoConfig.sso_enabled;
             const securityOrg = sso ? null : securityRequestOrg(responseUrl);
             if (securityOrg) {
               return sessionStillAlive(securityOrg).then((alive) => {

@@ -306,7 +306,7 @@ export default defineComponent({
     });
 
     const showSSO = computed(() => {
-      return store.state.zoConfig.sso_enabled && config.isEnterprise === "true";
+      return !!store.state.zoConfig.sso_enabled;
     });
 
     const showInternalLogin = computed(() => {
