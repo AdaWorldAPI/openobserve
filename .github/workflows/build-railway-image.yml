@@ -19,9 +19,10 @@ permissions:
   contents: read
   packages: write
 
+# A running build is never cancelled: a newer push waits, and only the newest waiting one is kept.
 concurrency:
   group: build-railway-image
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   image:
