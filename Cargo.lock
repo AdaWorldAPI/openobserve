@@ -6591,11 +6591,43 @@ dependencies = [
 [[package]]
 name = "lance-graph-contract"
 version = "0.1.0"
-source = "git+https://github.com/AdaWorldAPI/lance-graph?branch=main#9d70ae4d772499792a1dd34632d4f64e41bfc2b3"
+source = "git+https://github.com/AdaWorldAPI/lance-graph?branch=main#469a866eea1535a16449043ec142c33d8dca29d7"
 dependencies = [
  "glob",
  "serde",
  "serde_yaml",
+]
+
+[[package]]
+name = "lance-graph-dir-sim"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/lance-graph?branch=main#469a866eea1535a16449043ec142c33d8dca29d7"
+dependencies = [
+ "lance-graph-mask-risc",
+ "lance-graph-quack",
+ "ogar-ad",
+ "ogar-az",
+ "ogar-dir-core",
+ "ogar-dir-sim",
+ "unicase",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "lance-graph-mask-risc"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/lance-graph?branch=main#469a866eea1535a16449043ec142c33d8dca29d7"
+dependencies = [
+ "ndarray",
+]
+
+[[package]]
+name = "lance-graph-quack"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/lance-graph?branch=main#469a866eea1535a16449043ec142c33d8dca29d7"
+dependencies = [
+ "lance-graph-contract",
+ "lance-graph-mask-risc",
 ]
 
 [[package]]
@@ -7673,6 +7705,17 @@ name = "o2_ratelimit"
 version = "0.1.0"
 
 [[package]]
+name = "o2_substrate"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "lance-graph-dir-sim",
+ "lance-graph-mask-risc",
+ "lance-graph-quack",
+ "serde_json",
+]
+
+[[package]]
 name = "o2_zitadel"
 version = "0.1.0"
 dependencies = [
@@ -7975,6 +8018,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ogar-ad"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
+dependencies = [
+ "ogar-dir-core",
+]
+
+[[package]]
 name = "ogar-auth"
 version = "0.1.0"
 source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
@@ -7989,6 +8040,28 @@ dependencies = [
  "md-5 0.10.6",
  "ogar-encryption",
  "sha1 0.10.7",
+]
+
+[[package]]
+name = "ogar-az"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
+dependencies = [
+ "ogar-dir-core",
+ "serde_json",
+]
+
+[[package]]
+name = "ogar-dir-core"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
+
+[[package]]
+name = "ogar-dir-sim"
+version = "0.1.0"
+source = "git+https://github.com/AdaWorldAPI/OGAR?branch=main#cae37ed108b1fe7ef031b98a848d37cf0a2c598e"
+dependencies = [
+ "ogar-dir-core",
 ]
 
 [[package]]
