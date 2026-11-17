@@ -37,6 +37,8 @@ use crate::{
 
 /// How long a started login may take.
 pub const LOGIN_TTL_SECS: u64 = 600;
+/// Pending logins kept at once; past it a new login is refused rather than stored.
+pub const MAX_PENDING_LOGINS: usize = 10_000;
 /// Prefix of the session value; the validator takes this scheme only from a server-side session.
 pub const SESSION_SCHEME: &str = "Zitadel ";
 const PROVIDER: ProviderId = ProviderId("zitadel");
@@ -403,6 +405,19 @@ impl UserStore for GrantedStore {
     fn resolve_external(&self, id: &ExternalIdentity) -> Option<&User> {
         (id == &self.identity).then_some(&self.user)
     }
+}
+
+/// Whether a stored pending record is past [`LOGIN_TTL_SECS`] at `now`. An unreadable record
+/// (including a consumed-state marker) can never finish a login, so it counts as expired.
+pub fn pending_expired(record: &str, now: u64) -> bool {
+    serde_json::from_str::<Pending>(record)
+        .map(|p| now.saturating_sub(p.created) >= LOGIN_TTL_SECS)
+        .unwrap_or(true)
+}
+
+/// Whether `remaining` pending logins, after the expired ones are swept, leave no room.
+pub fn pending_cap_reached(remaining: usize) -> bool {
+    remaining > MAX_PENDING_LOGINS
 }
 
 fn id_token_input(token: &str, nonce: &str) -> IdToken {

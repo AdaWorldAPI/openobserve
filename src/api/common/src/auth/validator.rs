@@ -2554,6 +2554,30 @@ CN5lTowpVXP2OIiiNTGa75Fj
         );
     }
 
+    // Helper level: the policy is a process-wide OnceLock from env, so it cannot be switched on
+    // in-process without changing every other test's Basic auth.
+    #[cfg(feature = "zitadel")]
+    #[test]
+    fn test_password_auth_refused_follows_native_login_and_break_glass() {
+        assert!(!password_auth_refused(None, false), "inactive");
+        assert!(
+            !password_auth_refused(Some((true, false)), false),
+            "native on"
+        );
+        assert!(
+            !password_auth_refused(Some((false, true)), true),
+            "root break-glass"
+        );
+        assert!(
+            password_auth_refused(Some((false, true)), false),
+            "non-root"
+        );
+        assert!(
+            password_auth_refused(Some((false, false)), true),
+            "break-glass off"
+        );
+    }
+
     #[tokio::test]
     async fn test_validate() {
         let org_id = "default";

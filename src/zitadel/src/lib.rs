@@ -23,7 +23,10 @@ pub mod http;
 use std::sync::OnceLock;
 
 pub use config::{PolicyRole, TenantRow, ZitadelConfig};
-pub use flow::{Admitted, LOGIN_TTL_SECS, Refusal, SESSION_SCHEME, Started, Zitadel};
+pub use flow::{
+    Admitted, LOGIN_TTL_SECS, MAX_PENDING_LOGINS, Refusal, SESSION_SCHEME, Started, Zitadel,
+    pending_cap_reached, pending_expired,
+};
 pub use http::{OidcHttp, ReqwestHttp};
 
 /// Key prefix (the kv "org") under which pending logins are kept, keyed by `state`.
@@ -58,10 +61,12 @@ pub fn native_login_enabled() -> bool {
 /// May this user sign in with a password? Only root, and only while break-glass is on, once
 /// ZITADEL is active with native login off.
 pub fn password_login_allowed(is_root: bool) -> bool {
-    password_login_policy(
-        zitadel().map(|z| (z.config().native_login, z.config().root_break_glass)),
-        is_root,
-    )
+    password_login_policy(password_policy(), is_root)
+}
+
+/// `(native_login, root_break_glass)` of the active configuration, `None` without one.
+pub fn password_policy() -> Option<(bool, bool)> {
+    zitadel().map(|z| (z.config().native_login, z.config().root_break_glass))
 }
 
 /// `active` is `(native_login, root_break_glass)` of the active configuration, `None` without one.
