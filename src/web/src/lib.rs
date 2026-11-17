@@ -36,7 +36,6 @@ include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
 pub struct WebAssets;
 
 impl WebAssets {
-    /// The file at `path`, relative to the embedded folder.
     pub fn get(path: &str) -> Option<&'static [u8]> {
         ASSETS
             .binary_search_by(|(name, _)| (*name).cmp(path))

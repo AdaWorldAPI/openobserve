@@ -54,7 +54,6 @@ fn main() {
     fs::write(&out, table(&files)).expect("failed to write the asset table");
 }
 
-/// Every file under `dir`, as (path relative to `root` with `/` separators, absolute path).
 fn collect(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
