@@ -15,8 +15,9 @@
 //! Sentinel's two digest queries, answered by folds over lanes and compared with the replies
 //! sentinel-rs captured from a real OpenObserve (`tests/data/sentinel-digests.json`).
 //!
-//! The digest keys (`subject_ref`, `target_ref`) are SQL `COALESCE`s there; here they are
-//! columns of the batch, as an ingest function would write them. `event_refs` is not compared.
+//! The digest keys are SQL `COALESCE`s there. `group_by_first_of` reads them from the event's
+//! own columns inside the fold; the `subject_ref` and `target_ref` columns exist only as a
+//! second way to the same answer. `event_refs` is not compared.
 
 use std::sync::Arc;
 
@@ -88,6 +89,9 @@ fn batch(rows: &[Map<String, Value>]) -> RecordBatch {
         ("tenant_alias", text(&field("tenant_alias"))),
         ("signal", text(&field("signal"))),
         ("actor_ref", text(&field("actor_ref"))),
+        ("account_ref", text(&field("account_ref"))),
+        ("resource_ref", text(&field("resource_ref"))),
+        ("policy_ref", text(&field("policy_ref"))),
         (
             "subject_ref",
             text(&|r| {
@@ -110,8 +114,12 @@ fn batch(rows: &[Map<String, Value>]) -> RecordBatch {
     .unwrap()
 }
 
-/// `(hi, lo, rows, first, last)` per group, sorted; `tenant` narrows to sentinel's `WHERE`.
-fn fold(rows: &[Map<String, Value>], hi: &str, lo: &str, tenant: bool) -> Vec<PairGroup> {
+const SUBJECT: [&str; 3] = ["account_ref", "resource_ref", "policy_ref"];
+const TARGET: [&str; 2] = ["resource_ref", "policy_ref"];
+
+/// The groups per key, sorted; `tenant` narrows to sentinel's `WHERE`. One column a side
+/// takes the fused pair fold, several take the position-map fold.
+fn fold(rows: &[Map<String, Value>], hi: &[&str], lo: &[&str], tenant: bool) -> Vec<PairGroup> {
     let mut source = StreamSource::new(CLASS, READER);
     source.append(&batch(rows)).unwrap();
     let r = source.reader().unwrap();
@@ -123,7 +131,10 @@ fn fold(rows: &[Map<String, Value>], hi: &str, lo: &str, tenant: bool) -> Vec<Pa
     } else {
         r.all()
     };
-    let mut groups = r.group_by_pair(filter, hi, lo).unwrap();
+    let mut groups = match (hi, lo) {
+        ([hi], [lo]) => r.group_by_pair(filter, hi, lo).unwrap(),
+        _ => r.group_by_first_of(filter, hi, lo).unwrap(),
+    };
     groups.sort();
     groups
 }
@@ -151,10 +162,9 @@ fn the_signal_summary_digest_equals_the_captured_reply() {
     let c = capture();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
     assert_eq!(want.len(), 4);
-    assert_eq!(
-        fold(&events(&c, false), "subject_ref", "signal", true),
-        want
-    );
+    let rows = events(&c, false);
+    assert_eq!(fold(&rows, &SUBJECT, &["signal"], true), want);
+    assert_eq!(fold(&rows, &["subject_ref"], &["signal"], true), want);
 }
 
 #[test]
@@ -162,10 +172,9 @@ fn the_actor_link_digest_equals_the_captured_reply() {
     let c = capture();
     let want = captured(&c, "actor_link", "actor_ref", "target_ref");
     assert_eq!(want.len(), 2);
-    assert_eq!(
-        fold(&events(&c, false), "actor_ref", "target_ref", true),
-        want
-    );
+    let rows = events(&c, false);
+    assert_eq!(fold(&rows, &["actor_ref"], &TARGET, true), want);
+    assert_eq!(fold(&rows, &["actor_ref"], &["target_ref"], true), want);
 }
 
 /// Without the tenant terms the foreign row joins a group, so the filter is what fences it.
@@ -173,7 +182,7 @@ fn the_actor_link_digest_equals_the_captured_reply() {
 fn the_foreign_tenant_row_is_fenced_by_the_filter() {
     let c = capture();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
-    let open = fold(&events(&c, false), "subject_ref", "signal", false);
+    let open = fold(&events(&c, false), &SUBJECT, &["signal"], false);
     assert_ne!(open, want);
     assert_eq!(
         open.iter().map(|g| g.rows).sum::<usize>(),
@@ -185,5 +194,17 @@ fn the_foreign_tenant_row_is_fenced_by_the_filter() {
 fn a_changed_signal_changes_the_digest() {
     let c = capture();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
-    assert_ne!(fold(&events(&c, true), "subject_ref", "signal", true), want);
+    assert_ne!(fold(&events(&c, true), &SUBJECT, &["signal"], true), want);
+}
+
+/// The order of the columns is the key: a row holding two of them takes the first.
+#[test]
+fn the_first_column_a_row_holds_names_its_group() {
+    let c = capture();
+    let mut rows = events(&c, false);
+    rows[0].insert("policy_ref".into(), "synthetic-policy-01".into());
+    let by = |hi: &[&str]| fold(&rows, hi, &["signal"], true);
+    let want = captured(&c, "signal_summary", "subject_ref", "signal");
+    assert_eq!(by(&SUBJECT), want);
+    assert_ne!(by(&["policy_ref", "account_ref", "resource_ref"]), want);
 }

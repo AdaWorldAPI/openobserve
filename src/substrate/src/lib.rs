@@ -15,6 +15,8 @@
 
 mod source;
 
+use std::collections::HashMap;
+
 use lance_graph_contract::class_view::WideFieldMask;
 pub use lance_graph_dt64::dr::Scope;
 use lance_graph_dt64::{
@@ -23,7 +25,7 @@ use lance_graph_dt64::{
 use lance_graph_mask_risc::{Foreign, LaneRef, Out, Planes, Scratch, Value, execute, execute_into};
 pub use lance_graph_quack::Filter;
 use lance_graph_quack::{
-    Agg, Cmp, Col, GroupAddr, GroupAgg, Mask, Query, lower, normalize_group_sink,
+    Agg, Cmp, Col, ForeignLane, GroupAddr, GroupAgg, Mask, Query, lower, normalize_group_sink,
 };
 pub use source::{STREAM_REV, StreamSource, StreamView};
 
@@ -247,7 +249,7 @@ impl Reader<'_> {
             .fold(filter, |f, col| self.present(f, col));
         let fold = |agg: GroupAgg| -> Result<Vec<i64>, Refusal> {
             let mut sink = vec![0i64; groups];
-            self.run_groups(keyed.clone(), key, agg, &mut sink)?;
+            self.run_groups(keyed.clone(), key, agg, &Foreign::NONE, &mut sink)?;
             normalize_group_sink(agg.fold(), &mut sink);
             Ok(sink)
         };
@@ -273,6 +275,116 @@ impl Reader<'_> {
                 })
             })
             .collect()
+    }
+
+    /// `GROUP BY COALESCE(hi…), COALESCE(lo…)`: each key is the first of its text columns a
+    /// row holds. The columns are never merged into a lane: a position map per column sends
+    /// its codes to one shared coordinate, read inside the fold.
+    pub fn group_by_first_of(
+        &self,
+        filter: Filter,
+        hi: &[&str],
+        lo: &[&str],
+    ) -> Result<Vec<PairGroup>, Refusal> {
+        let (hi, lo, time) = (self.side(hi)?, self.side(lo)?, self.time()?);
+        let (n_hi, n_lo) = (hi.names.len(), lo.names.len());
+        let maps: Vec<LaneRef<'_>> = hi.maps.iter().map(|m| LaneRef::U32(m)).collect();
+        let foreign = Foreign {
+            planes: &[],
+            lanes: &maps,
+        };
+        let mut cells = vec![Cell::EMPTY; n_hi * n_lo];
+        let timed = self.present(filter, time);
+        for (kl, lo_map) in lo.maps.iter().enumerate() {
+            for (code, at_lo) in lo_map.iter().enumerate() {
+                let row = Filter::and([
+                    timed.clone(),
+                    lo.only(kl),
+                    Filter::cmp(lo.cols[kl], Cmp::EqU32(code as u32)),
+                ]);
+                for kh in 0..hi.cols.len() {
+                    let keyed = Filter::and([row.clone(), hi.only(kh)]);
+                    let column = self.fold_via(keyed, hi.cols[kh], kh, time, &foreign, n_hi)?;
+                    for (at_hi, cell) in column.into_iter().enumerate() {
+                        cells[at_hi * n_lo + *at_lo as usize].merge(cell);
+                    }
+                }
+            }
+        }
+        let base_us = self.source.base_us().unwrap_or(0);
+        Ok(cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.rows != 0)
+            .map(|(g, c)| PairGroup {
+                hi: hi.names[g / n_lo].clone(),
+                lo: lo.names[g % n_lo].clone(),
+                rows: c.rows as usize,
+                first_us: base_us + c.first * US_PER_MS,
+                last_us: base_us + c.last * US_PER_MS,
+            })
+            .collect())
+    }
+
+    /// Rows, first and last time per shared position of `fk`, read through map `map`.
+    fn fold_via(
+        &self,
+        filter: Filter,
+        fk: Col,
+        map: usize,
+        time: Col,
+        foreign: &Foreign<'_>,
+        positions: usize,
+    ) -> Result<Vec<Cell>, Refusal> {
+        let key = GroupAddr::Via {
+            fk,
+            key: ForeignLane(map as u16),
+        };
+        let fold = |agg: GroupAgg| -> Result<Vec<i64>, Refusal> {
+            let mut sink = vec![0i64; positions];
+            self.run_groups(filter.clone(), key, agg, foreign, &mut sink)?;
+            normalize_group_sink(agg.fold(), &mut sink);
+            Ok(sink)
+        };
+        let rows = fold(GroupAgg::Count)?;
+        let first = fold(GroupAgg::MinI32(time))?;
+        let last = fold(GroupAgg::MaxI32(time))?;
+        Ok((0..positions)
+            .map(|p| match rows[p] {
+                0 => Cell::EMPTY,
+                n => Cell {
+                    rows: n,
+                    first: first[p],
+                    last: last[p],
+                },
+            })
+            .collect())
+    }
+
+    /// The position map of each column of a key: its codes sent to one shared coordinate.
+    fn side(&self, columns: &[&str]) -> Result<Side, Refusal> {
+        let mut side = Side::default();
+        let mut at: HashMap<String, u32> = HashMap::new();
+        for column in columns {
+            let col = self.text(column)?;
+            let codes = self.source.field(col.0 as usize).values.text_codes();
+            let mut map = Vec::new();
+            for code in 0..codes.unwrap_or(0) as u32 {
+                let text = self
+                    .source
+                    .text(&self.frame, column, code)
+                    .ok_or_else(|| Refusal::Answer(format!("{column} code {code} unmapped")))?;
+                let next = side.names.len() as u32;
+                let position = *at.entry(text.to_string()).or_insert(next);
+                if position == next {
+                    side.names.push(text.to_string());
+                }
+                map.push(position);
+            }
+            side.cols.push(col);
+            side.maps.push(map);
+        }
+        Ok(side)
     }
 
     fn present(&self, filter: Filter, col: Col) -> Filter {
@@ -306,6 +418,7 @@ impl Reader<'_> {
         filter: Filter,
         key: GroupAddr,
         agg: GroupAgg,
+        foreign: &Foreign<'_>,
         sink: &mut [i64],
     ) -> Result<(), Refusal> {
         let query = Query {
@@ -321,15 +434,9 @@ impl Reader<'_> {
         };
         let mut scratch =
             Scratch::for_program(&program, rows).map_err(|e| Refusal::Run(format!("{e:?}")))?;
-        execute_into(
-            &program,
-            &planes,
-            &Foreign::NONE,
-            &mut scratch,
-            Out::I64(sink),
-        )
-        .map(|_| ())
-        .map_err(|e| Refusal::Run(format!("{e:?}")))
+        execute_into(&program, &planes, foreign, &mut scratch, Out::I64(sink))
+            .map(|_| ())
+            .map_err(|e| Refusal::Run(format!("{e:?}")))
     }
 
     fn position(&self, column: &str) -> Result<usize, Refusal> {
@@ -365,7 +472,52 @@ impl Reader<'_> {
     }
 }
 
-/// One group of [`Reader::group_by_pair`].
+/// One key of [`Reader::group_by_first_of`]: its columns in priority order.
+#[derive(Default)]
+struct Side {
+    cols: Vec<Col>,
+    /// Per column, code → shared position.
+    maps: Vec<Vec<u32>>,
+    /// Shared position → text.
+    names: Vec<String>,
+}
+
+impl Side {
+    /// Rows whose key comes from column `k`: it holds a value and no earlier column does.
+    fn only(&self, k: usize) -> Filter {
+        let valid = |col: &Col| Mask(col.0 + 1);
+        Filter::and(
+            self.cols[..k]
+                .iter()
+                .map(|c| Filter::is_null(valid(c)))
+                .chain([Filter::is_not_null(valid(&self.cols[k]))]),
+        )
+    }
+}
+
+/// One group's running answer across the folds that reach it.
+#[derive(Clone, Copy)]
+struct Cell {
+    rows: i64,
+    first: i64,
+    last: i64,
+}
+
+impl Cell {
+    const EMPTY: Cell = Cell {
+        rows: 0,
+        first: i64::MAX,
+        last: i64::MIN,
+    };
+
+    fn merge(&mut self, other: Cell) {
+        self.rows += other.rows;
+        self.first = self.first.min(other.first);
+        self.last = self.last.max(other.last);
+    }
+}
+
+/// One group of [`Reader::group_by_pair`] or [`Reader::group_by_first_of`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PairGroup {
     pub hi: String,
