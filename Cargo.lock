@@ -7640,6 +7640,13 @@ name = "o2_enterprise"
 version = "0.1.0"
 
 [[package]]
+name = "o2_log_patterns"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "o2_openfga"
 version = "0.1.0"
 
