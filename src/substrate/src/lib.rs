@@ -15,6 +15,8 @@
 
 mod source;
 
+use std::collections::HashMap;
+
 use lance_graph_contract::class_view::WideFieldMask;
 pub use lance_graph_dt64::dr::Scope;
 use lance_graph_dt64::{
@@ -275,6 +277,108 @@ impl Reader<'_> {
             .collect()
     }
 
+    /// `GROUP BY COALESCE(hi…), COALESCE(lo…)`: each key is the first of its text columns a
+    /// row holds. Rows are folded by their own codes, one fused pair fold per column pair;
+    /// the position maps then relabel the groups, never the rows.
+    pub fn group_by_first_of(
+        &self,
+        filter: Filter,
+        hi: &[&str],
+        lo: &[&str],
+    ) -> Result<Vec<PairGroup>, Refusal> {
+        let (hi, lo, time) = (self.side(hi)?, self.side(lo)?, self.time()?);
+        let n_lo = lo.names.len();
+        let mut cells = vec![Cell::EMPTY; hi.names.len() * n_lo];
+        let timed = self.present(filter, time);
+        for (kh, hi_map) in hi.maps.iter().enumerate() {
+            for (kl, lo_map) in lo.maps.iter().enumerate() {
+                let stride = lo_map.len();
+                if hi_map.is_empty() || stride == 0 {
+                    continue;
+                }
+                let key = GroupAddr::Pair {
+                    hi: hi.cols[kh],
+                    lo: lo.cols[kl],
+                    stride: stride as u32,
+                };
+                let keyed = Filter::and([timed.clone(), hi.only(kh), lo.only(kl)]);
+                let folded = self.fold_pair(keyed, key, time, hi_map.len() * stride)?;
+                for (g, cell) in folded.into_iter().enumerate() {
+                    let at = hi_map[g / stride] as usize * n_lo + lo_map[g % stride] as usize;
+                    cells[at].merge(cell);
+                }
+            }
+        }
+        let base_us = self.source.base_us().unwrap_or(0);
+        Ok(cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.rows != 0)
+            .map(|(g, c)| PairGroup {
+                hi: hi.names[g / n_lo].clone(),
+                lo: lo.names[g % n_lo].clone(),
+                rows: c.rows as usize,
+                first_us: base_us + c.first * US_PER_MS,
+                last_us: base_us + c.last * US_PER_MS,
+            })
+            .collect())
+    }
+
+    /// Rows, first and last time per group of `key`: three programs.
+    fn fold_pair(
+        &self,
+        filter: Filter,
+        key: GroupAddr,
+        time: Col,
+        groups: usize,
+    ) -> Result<Vec<Cell>, Refusal> {
+        let fold = |agg: GroupAgg| -> Result<Vec<i64>, Refusal> {
+            let mut sink = vec![0i64; groups];
+            self.run_groups(filter.clone(), key, agg, &mut sink)?;
+            normalize_group_sink(agg.fold(), &mut sink);
+            Ok(sink)
+        };
+        let rows = fold(GroupAgg::Count)?;
+        let first = fold(GroupAgg::MinI32(time))?;
+        let last = fold(GroupAgg::MaxI32(time))?;
+        Ok((0..groups)
+            .map(|g| match rows[g] {
+                0 => Cell::EMPTY,
+                n => Cell {
+                    rows: n,
+                    first: first[g],
+                    last: last[g],
+                },
+            })
+            .collect())
+    }
+
+    /// The position map of each column of a key: its codes sent to one shared coordinate.
+    fn side(&self, columns: &[&str]) -> Result<Side, Refusal> {
+        let mut side = Side::default();
+        let mut at: HashMap<String, u32> = HashMap::new();
+        for column in columns {
+            let col = self.text(column)?;
+            let codes = self.source.field(col.0 as usize).values.text_codes();
+            let mut map = Vec::new();
+            for code in 0..codes.unwrap_or(0) as u32 {
+                let text = self
+                    .source
+                    .text(&self.frame, column, code)
+                    .ok_or_else(|| Refusal::Answer(format!("{column} code {code} unmapped")))?;
+                let next = side.names.len() as u32;
+                let position = *at.entry(text.to_string()).or_insert(next);
+                if position == next {
+                    side.names.push(text.to_string());
+                }
+                map.push(position);
+            }
+            side.cols.push(col);
+            side.maps.push(map);
+        }
+        Ok(side)
+    }
+
     fn present(&self, filter: Filter, col: Col) -> Filter {
         Filter::and([filter, Filter::is_not_null(Mask(col.0 + 1))])
     }
@@ -365,7 +469,52 @@ impl Reader<'_> {
     }
 }
 
-/// One group of [`Reader::group_by_pair`].
+/// One key of [`Reader::group_by_first_of`]: its columns in priority order.
+#[derive(Default)]
+struct Side {
+    cols: Vec<Col>,
+    /// Per column, code → shared position.
+    maps: Vec<Vec<u32>>,
+    /// Shared position → text.
+    names: Vec<String>,
+}
+
+impl Side {
+    /// Rows whose key comes from column `k`: it holds a value and no earlier column does.
+    fn only(&self, k: usize) -> Filter {
+        let valid = |col: &Col| Mask(col.0 + 1);
+        Filter::and(
+            self.cols[..k]
+                .iter()
+                .map(|c| Filter::is_null(valid(c)))
+                .chain([Filter::is_not_null(valid(&self.cols[k]))]),
+        )
+    }
+}
+
+/// One group's running answer across the folds that reach it.
+#[derive(Clone, Copy)]
+struct Cell {
+    rows: i64,
+    first: i64,
+    last: i64,
+}
+
+impl Cell {
+    const EMPTY: Cell = Cell {
+        rows: 0,
+        first: i64::MAX,
+        last: i64::MIN,
+    };
+
+    fn merge(&mut self, other: Cell) {
+        self.rows += other.rows;
+        self.first = self.first.min(other.first);
+        self.last = self.last.max(other.last);
+    }
+}
+
+/// One group of [`Reader::group_by_pair`] or [`Reader::group_by_first_of`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PairGroup {
     pub hi: String,
