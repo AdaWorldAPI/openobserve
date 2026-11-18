@@ -1,0 +1,26 @@
+{
+ "config": {
+  "depth": 5,
+  "masking_mode": "regex",
+  "max_child": 100,
+  "max_clusters": 1000,
+  "min_cluster_size": 10,
+  "sample_size": 300,
+  "similarity_threshold": 0.3,
+  "tokenizer_mode": "alphanumeric"
+ },
+ "extraction_method": "xdrain-rs",
+ "patterns": [
+  {
+   "frequency": 100,
+   "percentage": 100.0,
+   "template": "request <*> handled <*>",
+   "wildcard_masks": [
+    "[200-299]",
+    "path=/api/vXXX/items"
+   ]
+  }
+ ],
+ "query": "SELECT * FROM parity_logs, size 300, over the parity fixture",
+ "total_logs_analyzed": 100
+}

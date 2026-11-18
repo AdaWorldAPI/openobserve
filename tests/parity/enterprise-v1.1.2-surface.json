@@ -1,0 +1,267 @@
+{
+ "differs": {
+  "/api/default/ai/toolsets": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "toolsets"
+   ]
+  },
+  "/api/default/alerts/deduplication/semantic-groups": {
+   "a": 403,
+   "b": 200,
+   "b_shape": "list"
+  },
+  "/api/default/annotation_queues": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/anomaly_detection": {
+   "a": 404,
+   "b": 200,
+   "b_shape": "list"
+  },
+  "/api/default/anomaly_detection/history": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "configs"
+   ]
+  },
+  "/api/default/cipher_keys": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "keys"
+   ]
+  },
+  "/api/default/datasets": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/db_monitoring/blocking": {
+   "a": 403,
+   "b": 200,
+   "b_shape": [
+    "chains",
+    "freshness",
+    "hits",
+    "not_collecting",
+    "sample_interval_seconds",
+    "sampled_at",
+    "stream",
+    "total",
+    "truncated"
+   ]
+  },
+  "/api/default/domain_management": {
+   "a": 404,
+   "b": 403,
+   "b_shape": [
+    "code",
+    "message"
+   ]
+  },
+  "/api/default/eval_jobs": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/password_complexity": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "max_length",
+    "min_length",
+    "require_digit",
+    "require_lowercase",
+    "require_special",
+    "require_uppercase",
+    "special_char_set"
+   ]
+  },
+  "/api/default/pipelines/backfill": {
+   "a": 403,
+   "b": 200,
+   "b_shape": "list"
+  },
+  "/api/default/prompts": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/prompts/resolve": {
+   "a": 404,
+   "b": 400,
+   "b_shape": "text"
+  },
+  "/api/default/providers": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/query_manager/status": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "status"
+   ]
+  },
+  "/api/default/ratelimit/api_modules": {
+   "a": 404,
+   "b": 400,
+   "b_shape": [
+    "code",
+    "message"
+   ]
+  },
+  "/api/default/ratelimit/role_list": {
+   "a": 404,
+   "b": 400,
+   "b_shape": "text"
+  },
+  "/api/default/re_patterns": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "patterns"
+   ]
+  },
+  "/api/default/re_patterns/built-in": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "last_updated",
+    "patterns",
+    "source_url"
+   ]
+  },
+  "/api/default/resources": {
+   "a": 403,
+   "b": 200,
+   "b_shape": "list"
+  },
+  "/api/default/roles": {
+   "a": 403,
+   "b": 500,
+   "b_shape": [
+    "code",
+    "message"
+   ]
+  },
+  "/api/default/score_configs": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/scorers": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/search/profile": {
+   "a": 404,
+   "b": 400,
+   "b_shape": [
+    "code",
+    "message"
+   ]
+  },
+  "/api/default/search_jobs": {
+   "a": 404,
+   "b": 200,
+   "b_shape": "list"
+  },
+  "/api/default/service_streams": {
+   "a": 404,
+   "b": 200,
+   "b_shape": "list"
+  },
+  "/api/default/service_streams/_analytics": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "available_groups",
+    "by_cardinality",
+    "dimensions",
+    "generated_at",
+    "org_id",
+    "recommended_priority_dimensions",
+    "total_dimensions"
+   ]
+  },
+  "/api/default/settings/gen_ai/agent_mapping": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "agent_id_fields",
+    "agent_name_fields",
+    "env_fields",
+    "version_fields"
+   ]
+  },
+  "/api/default/settings/password_policy": {
+   "a": 404,
+   "b": 403,
+   "b_shape": [
+    "code",
+    "message"
+   ]
+  },
+  "/api/default/tasks": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/traces/service_graph/edge/history": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "data_points"
+   ]
+  },
+  "/api/default/users/roles/all": {
+   "a": 403,
+   "b": 500,
+   "b_shape": [
+    "code",
+    "message"
+   ]
+  },
+  "/api/default/workflows": {
+   "a": 404,
+   "b": 200,
+   "b_shape": "list"
+  },
+  "/api/license": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "expired",
+    "ingestion_exceeded",
+    "ingestion_used",
+    "installation_id",
+    "key",
+    "license"
+   ]
+  }
+ }
+}
