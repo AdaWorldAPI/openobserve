@@ -16,6 +16,7 @@
 #![cfg(feature = "enterprise")]
 
 mod alert_acks;
+mod alert_composites;
 mod alert_states;
 mod alerts;
 mod anomaly_detection;
@@ -95,10 +96,11 @@ fn parse_eval_key(
     }
 }
 
-/// The `incidents` key carries two payloads; byte 94 is the unmute an older region skips.
+/// The `incidents` key carries three payloads; older regions skip bytes 94 and 103.
 async fn incident_msg(msg: Message) -> infra::errors::Result<()> {
     match msg.message_type {
         MessageType::IncidentUnmute => incidents::process_unmute(msg).await,
+        MessageType::IncidentMembership => incidents::process_membership(msg).await,
         _ => incidents::process(msg).await,
     }
 }
@@ -155,6 +157,7 @@ pub async fn init() -> Result<(), anyhow::Error> {
         on_alert_state_msg: alert_states::process,
         on_downtime_msg: downtimes::process,
         on_alert_ack_msg: alert_acks::process,
+        on_alert_composite_msg: alert_composites::process,
     };
     // On-call rides the scheduler topic with the triggers it belongs to, so a
     // response record always lands before the escalation timer that names it.
