@@ -15,12 +15,11 @@
 
 mod source;
 
-use std::collections::HashMap;
-
 use lance_graph_contract::class_view::WideFieldMask;
 pub use lance_graph_dt64::dr::Scope;
 use lance_graph_dt64::{
-    BindStore, ClassSchema, Extent, LaneRequest, LaneSource, RouteAt, dr::Frame,
+    BindStore, ClassSchema, Extent, LaneRequest, LaneSource, RouteAt,
+    dr::{Frame, TileMap, ValueKey},
 };
 use lance_graph_mask_risc::{Foreign, LaneRef, Out, Planes, Scratch, Value, execute, execute_into};
 pub use lance_graph_quack::Filter;
@@ -277,23 +276,22 @@ impl Reader<'_> {
             .collect()
     }
 
-    /// `GROUP BY COALESCE(hi…), COALESCE(lo…)`: each key is the first of its text columns a
-    /// row holds. Rows are folded by their own codes, one fused pair fold per column pair;
-    /// the position maps then relabel the groups, never the rows.
+    /// `GROUP BY COALESCE(hi…), COALESCE(lo…)`, answered in DR's coordinates: each key is the
+    /// first of its text columns a row holds, placed by the caller's tile map. Rows are
+    /// folded by their own codes; the map places the groups, never the rows.
     pub fn group_by_first_of(
         &self,
         filter: Filter,
-        hi: &[&str],
-        lo: &[&str],
-    ) -> Result<Vec<PairGroup>, Refusal> {
+        hi: &Key<'_>,
+        lo: &Key<'_>,
+    ) -> Result<Vec<PlacedGroup>, Refusal> {
         let (hi, lo, time) = (self.side(hi)?, self.side(lo)?, self.time()?);
-        let n_lo = lo.names.len();
-        let mut cells = vec![Cell::EMPTY; hi.names.len() * n_lo];
+        let mut cells = vec![Cell::EMPTY; hi.positions * lo.positions];
         let timed = self.present(filter, time);
-        for (kh, hi_map) in hi.maps.iter().enumerate() {
-            for (kl, lo_map) in lo.maps.iter().enumerate() {
-                let stride = lo_map.len();
-                if hi_map.is_empty() || stride == 0 {
+        for (kh, hi_place) in hi.places.iter().enumerate() {
+            for (kl, lo_place) in lo.places.iter().enumerate() {
+                let stride = lo_place.len();
+                if hi_place.is_empty() || stride == 0 {
                     continue;
                 }
                 let key = GroupAddr::Pair {
@@ -302,10 +300,11 @@ impl Reader<'_> {
                     stride: stride as u32,
                 };
                 let keyed = Filter::and([timed.clone(), hi.only(kh), lo.only(kl)]);
-                let folded = self.fold_pair(keyed, key, time, hi_map.len() * stride)?;
-                for (g, cell) in folded.into_iter().enumerate() {
-                    let at = hi_map[g / stride] as usize * n_lo + lo_map[g % stride] as usize;
-                    cells[at].merge(cell);
+                let folded = self.fold_pair(keyed, key, time, hi_place.len() * stride)?;
+                for (g, cell) in folded.into_iter().enumerate().filter(|(_, c)| c.rows != 0) {
+                    let at_hi = hi_place[g / stride].clone().map_err(Refusal::Unplaced)?;
+                    let at_lo = lo_place[g % stride].clone().map_err(Refusal::Unplaced)?;
+                    cells[usize::from(at_hi) * lo.positions + usize::from(at_lo)].merge(cell);
                 }
             }
         }
@@ -314,9 +313,9 @@ impl Reader<'_> {
             .iter()
             .enumerate()
             .filter(|(_, c)| c.rows != 0)
-            .map(|(g, c)| PairGroup {
-                hi: hi.names[g / n_lo].clone(),
-                lo: lo.names[g % n_lo].clone(),
+            .map(|(g, c)| PlacedGroup {
+                hi: (g / lo.positions) as u8,
+                lo: (g % lo.positions) as u8,
                 rows: c.rows as usize,
                 first_us: base_us + c.first * US_PER_MS,
                 last_us: base_us + c.last * US_PER_MS,
@@ -353,28 +352,31 @@ impl Reader<'_> {
             .collect())
     }
 
-    /// The position map of each column of a key: its codes sent to one shared coordinate.
-    fn side(&self, columns: &[&str]) -> Result<Side, Refusal> {
-        let mut side = Side::default();
-        let mut at: HashMap<String, u32> = HashMap::new();
-        for column in columns {
+    /// Where DR's map places each code of each column of a key; an unplaced text keeps its
+    /// name, so it is refused only if a row is counted under it.
+    fn side(&self, key: &Key<'_>) -> Result<Side, Refusal> {
+        let mut side = Side {
+            cols: Vec::new(),
+            places: Vec::new(),
+            positions: key.map.width().positions(),
+        };
+        for column in key.columns {
             let col = self.text(column)?;
             let codes = self.source.field(col.0 as usize).values.text_codes();
-            let mut map = Vec::new();
+            let mut place = Vec::new();
             for code in 0..codes.unwrap_or(0) as u32 {
                 let text = self
                     .source
                     .text(&self.frame, column, code)
                     .ok_or_else(|| Refusal::Answer(format!("{column} code {code} unmapped")))?;
-                let next = side.names.len() as u32;
-                let position = *at.entry(text.to_string()).or_insert(next);
-                if position == next {
-                    side.names.push(text.to_string());
-                }
-                map.push(position);
+                place.push(
+                    (key.identity)(&ValueKey(text.to_string()))
+                        .and_then(|global| key.map.local(global).ok())
+                        .ok_or_else(|| text.to_string()),
+                );
             }
             side.cols.push(col);
-            side.maps.push(map);
+            side.places.push(place);
         }
         Ok(side)
     }
@@ -469,14 +471,24 @@ impl Reader<'_> {
     }
 }
 
-/// One key of [`Reader::group_by_first_of`]: its columns in priority order.
-#[derive(Default)]
+/// One key of [`Reader::group_by_first_of`]: its columns in priority order. Positions are
+/// DR's and which identity a value key names is DT's; the caller brings both, this crate
+/// keeps neither a position map nor a label table.
+pub struct Key<'a> {
+    pub columns: &'a [&'a str],
+    /// DR: the tile the key's identities are placed in.
+    pub map: TileMap<'a>,
+    /// DT: the identity a value key of these columns names, or `None`.
+    pub identity: &'a dyn Fn(&ValueKey) -> Option<u64>,
+}
+
+/// A key's columns with the position DR gives each of their codes.
 struct Side {
     cols: Vec<Col>,
-    /// Per column, code → shared position.
-    maps: Vec<Vec<u32>>,
-    /// Shared position → text.
-    names: Vec<String>,
+    /// Per column, code → position in the tile, or the text DR does not place.
+    places: Vec<Vec<Result<u8, String>>>,
+    /// Positions of the key's tile.
+    positions: usize,
 }
 
 impl Side {
@@ -514,7 +526,17 @@ impl Cell {
     }
 }
 
-/// One group of [`Reader::group_by_pair`] or [`Reader::group_by_first_of`].
+/// One group of [`Reader::group_by_first_of`], keyed by positions in the callers' tiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PlacedGroup {
+    pub hi: u8,
+    pub lo: u8,
+    pub rows: usize,
+    pub first_us: i64,
+    pub last_us: i64,
+}
+
+/// One group of [`Reader::group_by_pair`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PairGroup {
     pub hi: String,
@@ -540,6 +562,8 @@ pub enum Refusal {
     Lower(String),
     Run(String),
     Answer(String),
+    /// A counted row holds a key text that DR's map gives no position.
+    Unplaced(String),
 }
 
 /// Saturates: a bound past the lane's range still compares correctly against every offset.

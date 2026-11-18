@@ -25,7 +25,8 @@ use arrow::{
     array::{ArrayRef, Int64Array, RecordBatch, StringArray},
     datatypes::{Field, Schema},
 };
-use o2_substrate::{Filter, PairGroup, Scope, StreamSource, TIMESTAMP};
+use lance_graph_dt64::dr::{LocalMap, TileMap, ValueKey, Width};
+use o2_substrate::{Filter, Key, PairGroup, Refusal, Scope, StreamSource, TIMESTAMP};
 use serde_json::{Map, Value};
 
 const CAPTURE: &str = include_str!("data/sentinel-digests.json");
@@ -117,26 +118,86 @@ fn batch(rows: &[Map<String, Value>]) -> RecordBatch {
 const SUBJECT: [&str; 3] = ["account_ref", "resource_ref", "policy_ref"];
 const TARGET: [&str; 2] = ["resource_ref", "policy_ref"];
 
-/// The groups per key, sorted; `tenant` narrows to sentinel's `WHERE`. One column a side
-/// takes the fused pair fold, several take the position-map fold.
-fn fold(rows: &[Map<String, Value>], hi: &[&str], lo: &[&str], tenant: bool) -> Vec<PairGroup> {
-    let mut source = StreamSource::new(CLASS, READER);
-    source.append(&batch(rows)).unwrap();
-    let r = source.reader().unwrap();
-    let filter = if tenant {
+/// The identities the test's tile holds. The order is not the order the stream meets them
+/// in, so a position can only come from the map.
+const IDENTITIES: [&str; 8] = [
+    "mailbox_forwarding_rule_created",
+    "synthetic-policy-01",
+    "signin_failure_burst",
+    "synthetic-mailbox-01",
+    "conditional_access_change_candidate",
+    "synthetic-actor-01",
+    "signin_success_after_failures",
+    "actor_ref",
+];
+
+/// The caller's DT reading of a value key: the identity it names.
+fn identity(key: &ValueKey) -> Option<u64> {
+    IDENTITIES
+        .iter()
+        .position(|n| *n == key.0)
+        .map(|i| 1_000 + i as u64)
+}
+
+fn tile() -> LocalMap {
+    let globals: Vec<u64> = (0..IDENTITIES.len() as u64).map(|i| 1_000 + i).collect();
+    LocalMap::prepare(Width::W64, &globals).unwrap()
+}
+
+fn name(map: TileMap<'_>, local: u8) -> String {
+    IDENTITIES[(map.global(local).unwrap() - 1_000) as usize].to_string()
+}
+
+fn tenant(r: &o2_substrate::Reader<'_>, on: bool) -> Filter {
+    if on {
         Filter::and([
             r.eq_text("customer_code", "LAB").unwrap(),
             r.eq_text("tenant_alias", "lab-1").unwrap(),
         ])
     } else {
         r.all()
-    };
-    let mut groups = match (hi, lo) {
-        ([hi], [lo]) => r.group_by_pair(filter, hi, lo).unwrap(),
-        _ => r.group_by_first_of(filter, hi, lo).unwrap(),
-    };
+    }
+}
+
+/// The digest over precomputed key columns: the fused pair fold, named by the code table.
+fn fold_columns(rows: &[Map<String, Value>], hi: &str, lo: &str) -> Vec<PairGroup> {
+    let mut source = StreamSource::new(CLASS, READER);
+    source.append(&batch(rows)).unwrap();
+    let r = source.reader().unwrap();
+    let mut groups = r.group_by_pair(tenant(&r, true), hi, lo).unwrap();
     groups.sort();
     groups
+}
+
+/// The digest over the event's own columns, placed by the tile and named back through it.
+fn fold_placed(
+    rows: &[Map<String, Value>],
+    hi: &[&str],
+    lo: &[&str],
+    fenced: bool,
+) -> Result<Vec<PairGroup>, Refusal> {
+    let mut source = StreamSource::new(CLASS, READER);
+    source.append(&batch(rows)).unwrap();
+    let r = source.reader().unwrap();
+    let tile = tile();
+    let key = |columns| Key {
+        columns,
+        map: tile.view(),
+        identity: &identity,
+    };
+    let placed = r.group_by_first_of(tenant(&r, fenced), &key(hi), &key(lo))?;
+    let mut groups: Vec<PairGroup> = placed
+        .iter()
+        .map(|g| PairGroup {
+            hi: name(tile.view(), g.hi),
+            lo: name(tile.view(), g.lo),
+            rows: g.rows,
+            first_us: g.first_us,
+            last_us: g.last_us,
+        })
+        .collect();
+    groups.sort();
+    Ok(groups)
 }
 
 fn captured(c: &Value, query: &str, hi: &str, lo: &str) -> Vec<PairGroup> {
@@ -163,8 +224,11 @@ fn the_signal_summary_digest_equals_the_captured_reply() {
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
     assert_eq!(want.len(), 4);
     let rows = events(&c, false);
-    assert_eq!(fold(&rows, &SUBJECT, &["signal"], true), want);
-    assert_eq!(fold(&rows, &["subject_ref"], &["signal"], true), want);
+    assert_eq!(
+        fold_placed(&rows, &SUBJECT, &["signal"], true),
+        Ok(want.clone())
+    );
+    assert_eq!(fold_columns(&rows, "subject_ref", "signal"), want);
 }
 
 #[test]
@@ -173,8 +237,11 @@ fn the_actor_link_digest_equals_the_captured_reply() {
     let want = captured(&c, "actor_link", "actor_ref", "target_ref");
     assert_eq!(want.len(), 2);
     let rows = events(&c, false);
-    assert_eq!(fold(&rows, &["actor_ref"], &TARGET, true), want);
-    assert_eq!(fold(&rows, &["actor_ref"], &["target_ref"], true), want);
+    assert_eq!(
+        fold_placed(&rows, &["actor_ref"], &TARGET, true),
+        Ok(want.clone())
+    );
+    assert_eq!(fold_columns(&rows, "actor_ref", "target_ref"), want);
 }
 
 /// Without the tenant terms the foreign row joins a group, so the filter is what fences it.
@@ -182,7 +249,7 @@ fn the_actor_link_digest_equals_the_captured_reply() {
 fn the_foreign_tenant_row_is_fenced_by_the_filter() {
     let c = capture();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
-    let open = fold(&events(&c, false), &SUBJECT, &["signal"], false);
+    let open = fold_placed(&events(&c, false), &SUBJECT, &["signal"], false).unwrap();
     assert_ne!(open, want);
     assert_eq!(
         open.iter().map(|g| g.rows).sum::<usize>(),
@@ -194,7 +261,10 @@ fn the_foreign_tenant_row_is_fenced_by_the_filter() {
 fn a_changed_signal_changes_the_digest() {
     let c = capture();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
-    assert_ne!(fold(&events(&c, true), &SUBJECT, &["signal"], true), want);
+    assert_ne!(
+        fold_placed(&events(&c, true), &SUBJECT, &["signal"], true),
+        Ok(want)
+    );
 }
 
 /// The order of the columns is the key: a row holding two of them takes the first.
@@ -203,8 +273,23 @@ fn the_first_column_a_row_holds_names_its_group() {
     let c = capture();
     let mut rows = events(&c, false);
     rows[0].insert("policy_ref".into(), "synthetic-policy-01".into());
-    let by = |hi: &[&str]| fold(&rows, hi, &["signal"], true);
+    let by = |hi: &[&str]| fold_placed(&rows, hi, &["signal"], true).unwrap();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
     assert_eq!(by(&SUBJECT), want);
     assert_ne!(by(&["policy_ref", "account_ref", "resource_ref"]), want);
+}
+
+/// A key the tile does not place is refused once a row is counted under it, and only then.
+#[test]
+fn a_counted_row_without_a_position_is_refused() {
+    let c = capture();
+    let mut rows = events(&c, false);
+    let foreign = rows.len() - 1;
+    rows[foreign].insert("account_ref".into(), "k02-actor".into());
+    let want = captured(&c, "signal_summary", "subject_ref", "signal");
+    assert_eq!(fold_placed(&rows, &SUBJECT, &["signal"], true), Ok(want));
+    assert_eq!(
+        fold_placed(&rows, &SUBJECT, &["signal"], false),
+        Err(Refusal::Unplaced("k02-actor".to_string()))
+    );
 }
