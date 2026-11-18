@@ -304,7 +304,7 @@ impl Reader<'_> {
                 for (g, cell) in folded.into_iter().enumerate().filter(|(_, c)| c.rows != 0) {
                     let at_hi = hi_place[g / stride].clone().map_err(Refusal::Unplaced)?;
                     let at_lo = lo_place[g % stride].clone().map_err(Refusal::Unplaced)?;
-                    cells[usize::from(at_hi) * lo.positions + usize::from(at_lo)].merge(cell);
+                    cells[at_hi as usize * lo.positions + at_lo as usize].merge(cell);
                 }
             }
         }
@@ -314,8 +314,8 @@ impl Reader<'_> {
             .enumerate()
             .filter(|(_, c)| c.rows != 0)
             .map(|(g, c)| PlacedGroup {
-                hi: (g / lo.positions) as u8,
-                lo: (g % lo.positions) as u8,
+                hi: (g / lo.positions) as u32,
+                lo: (g % lo.positions) as u32,
                 rows: c.rows as usize,
                 first_us: base_us + c.first * US_PER_MS,
                 last_us: base_us + c.last * US_PER_MS,
@@ -355,23 +355,40 @@ impl Reader<'_> {
     /// Where DR's map places each code of each column of a key; an unplaced text keeps its
     /// name, so it is refused only if a row is counted under it.
     fn side(&self, key: &Key<'_>) -> Result<Side, Refusal> {
+        let codes_of = |col: Col| self.source.field(col.0 as usize).values.text_codes();
+        let (columns, map, identity) = match key {
+            Key::Property { column } => {
+                let col = self.text(column)?;
+                let codes = codes_of(col).unwrap_or(0);
+                return Ok(Side {
+                    cols: vec![col],
+                    places: vec![(0..codes as u32).map(Ok).collect()],
+                    positions: codes,
+                });
+            }
+            Key::Entity {
+                columns,
+                map,
+                identity,
+            } => (columns, map, identity),
+        };
         let mut side = Side {
             cols: Vec::new(),
             places: Vec::new(),
-            positions: key.map.width().positions(),
+            positions: map.width().positions(),
         };
-        for column in key.columns {
+        for column in *columns {
             let col = self.text(column)?;
-            let codes = self.source.field(col.0 as usize).values.text_codes();
             let mut place = Vec::new();
-            for code in 0..codes.unwrap_or(0) as u32 {
+            for code in 0..codes_of(col).unwrap_or(0) as u32 {
                 let text = self
                     .source
                     .text(&self.frame, column, code)
                     .ok_or_else(|| Refusal::Answer(format!("{column} code {code} unmapped")))?;
                 place.push(
-                    (key.identity)(&ValueKey(text.to_string()))
-                        .and_then(|global| key.map.local(global).ok())
+                    identity(&ValueKey(text.to_string()))
+                        .and_then(|global| map.local(global).ok())
+                        .map(u32::from)
                         .ok_or_else(|| text.to_string()),
                 );
             }
@@ -379,6 +396,11 @@ impl Reader<'_> {
             side.places.push(place);
         }
         Ok(side)
+    }
+
+    /// DT's reading of a property group: the text `code` of `column` stands for.
+    pub fn label(&self, column: &str, code: u32) -> Option<&str> {
+        self.source.text(&self.frame, column, code)
     }
 
     fn present(&self, filter: Filter, col: Col) -> Filter {
@@ -471,23 +493,29 @@ impl Reader<'_> {
     }
 }
 
-/// One key of [`Reader::group_by_first_of`]: its columns in priority order. Positions are
-/// DR's and which identity a value key names is DT's; the caller brings both, this crate
-/// keeps neither a position map nor a label table.
-pub struct Key<'a> {
-    pub columns: &'a [&'a str],
-    /// DR: the tile the key's identities are placed in.
-    pub map: TileMap<'a>,
-    /// DT: the identity a value key of these columns names, or `None`.
-    pub identity: &'a dyn Fn(&ValueKey) -> Option<u64>,
+/// One key of [`Reader::group_by_first_of`]. This crate keeps neither a position map nor a
+/// label table: an entity is placed by the caller's DR tile, a property stays the code DT's
+/// code table gave it.
+pub enum Key<'a> {
+    /// The key names an entity: the first of `columns` a row holds, as SQL `COALESCE`.
+    Entity {
+        columns: &'a [&'a str],
+        /// DR: the tile the entities are placed in.
+        map: TileMap<'a>,
+        /// DT: the identity a value key of these columns names, or `None`.
+        identity: &'a dyn Fn(&ValueKey) -> Option<u64>,
+    },
+    /// The key is a property value. Its groups are the column's codes; no identity is
+    /// involved. Name one with [`Reader::label`].
+    Property { column: &'a str },
 }
 
 /// A key's columns with the position DR gives each of their codes.
 struct Side {
     cols: Vec<Col>,
-    /// Per column, code → position in the tile, or the text DR does not place.
-    places: Vec<Vec<Result<u8, String>>>,
-    /// Positions of the key's tile.
+    /// Per column, code → the group's coordinate, or the text DR does not place.
+    places: Vec<Vec<Result<u32, String>>>,
+    /// Coordinates of the key: the tile's positions, or the property's codes.
     positions: usize,
 }
 
@@ -526,11 +554,12 @@ impl Cell {
     }
 }
 
-/// One group of [`Reader::group_by_first_of`], keyed by positions in the callers' tiles.
+/// One group of [`Reader::group_by_first_of`]. Each side is a position in the caller's tile
+/// for an entity key, or the column's code for a property key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PlacedGroup {
-    pub hi: u8,
-    pub lo: u8,
+    pub hi: u32,
+    pub lo: u32,
     pub rows: usize,
     pub first_us: i64,
     pub last_us: i64,

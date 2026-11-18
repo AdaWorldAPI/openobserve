@@ -117,35 +117,32 @@ fn batch(rows: &[Map<String, Value>]) -> RecordBatch {
 
 const SUBJECT: [&str; 3] = ["account_ref", "resource_ref", "policy_ref"];
 const TARGET: [&str; 2] = ["resource_ref", "policy_ref"];
+const SUBJECT_KEY: Side<'static> = Side::Entity(&SUBJECT);
+const SIGNAL: Side<'static> = Side::Property("signal");
 
-/// The identities the test's tile holds. The order is not the order the stream meets them
-/// in, so a position can only come from the map.
-const IDENTITIES: [&str; 8] = [
-    "mailbox_forwarding_rule_created",
+/// The entities the test's tile holds. The order is not the order the stream meets them in,
+/// so a position can only come from the map. No signal is here: a signal is a property.
+const ENTITIES: [&str; 3] = [
     "synthetic-policy-01",
-    "signin_failure_burst",
     "synthetic-mailbox-01",
-    "conditional_access_change_candidate",
     "synthetic-actor-01",
-    "signin_success_after_failures",
-    "actor_ref",
 ];
 
 /// The caller's DT reading of a value key: the identity it names.
 fn identity(key: &ValueKey) -> Option<u64> {
-    IDENTITIES
+    ENTITIES
         .iter()
         .position(|n| *n == key.0)
         .map(|i| 1_000 + i as u64)
 }
 
 fn tile() -> LocalMap {
-    let globals: Vec<u64> = (0..IDENTITIES.len() as u64).map(|i| 1_000 + i).collect();
+    let globals: Vec<u64> = (0..ENTITIES.len() as u64).map(|i| 1_000 + i).collect();
     LocalMap::prepare(Width::W64, &globals).unwrap()
 }
 
-fn name(map: TileMap<'_>, local: u8) -> String {
-    IDENTITIES[(map.global(local).unwrap() - 1_000) as usize].to_string()
+fn name(map: TileMap<'_>, local: u32) -> String {
+    ENTITIES[(map.global(local as u8).unwrap() - 1_000) as usize].to_string()
 }
 
 fn tenant(r: &o2_substrate::Reader<'_>, on: bool) -> Filter {
@@ -169,28 +166,47 @@ fn fold_columns(rows: &[Map<String, Value>], hi: &str, lo: &str) -> Vec<PairGrou
     groups
 }
 
-/// The digest over the event's own columns, placed by the tile and named back through it.
+/// One side of a digest key in the test: entity columns, or one property column.
+#[derive(Clone, Copy)]
+enum Side<'a> {
+    Entity(&'a [&'a str]),
+    Property(&'a str),
+}
+
+fn key<'a>(side: Side<'a>, map: TileMap<'a>) -> Key<'a> {
+    match side {
+        Side::Entity(columns) => Key::Entity {
+            columns,
+            map,
+            identity: &identity,
+        },
+        Side::Property(column) => Key::Property { column },
+    }
+}
+
+/// The digest over the event's own columns: entities placed by the tile and named back
+/// through it, a property named by the code table.
 fn fold_placed(
     rows: &[Map<String, Value>],
-    hi: &[&str],
-    lo: &[&str],
+    hi: Side<'_>,
+    lo: Side<'_>,
     fenced: bool,
 ) -> Result<Vec<PairGroup>, Refusal> {
     let mut source = StreamSource::new(CLASS, READER);
     source.append(&batch(rows)).unwrap();
     let r = source.reader().unwrap();
     let tile = tile();
-    let key = |columns| Key {
-        columns,
-        map: tile.view(),
-        identity: &identity,
+    let (hi_key, lo_key) = (key(hi, tile.view()), key(lo, tile.view()));
+    let text = |side: Side<'_>, at: u32| match side {
+        Side::Entity(_) => name(tile.view(), at),
+        Side::Property(column) => r.label(column, at).unwrap().to_string(),
     };
-    let placed = r.group_by_first_of(tenant(&r, fenced), &key(hi), &key(lo))?;
+    let placed = r.group_by_first_of(tenant(&r, fenced), &hi_key, &lo_key)?;
     let mut groups: Vec<PairGroup> = placed
         .iter()
         .map(|g| PairGroup {
-            hi: name(tile.view(), g.hi),
-            lo: name(tile.view(), g.lo),
+            hi: text(hi, g.hi),
+            lo: text(lo, g.lo),
             rows: g.rows,
             first_us: g.first_us,
             last_us: g.last_us,
@@ -225,7 +241,7 @@ fn the_signal_summary_digest_equals_the_captured_reply() {
     assert_eq!(want.len(), 4);
     let rows = events(&c, false);
     assert_eq!(
-        fold_placed(&rows, &SUBJECT, &["signal"], true),
+        fold_placed(&rows, SUBJECT_KEY, SIGNAL, true),
         Ok(want.clone())
     );
     assert_eq!(fold_columns(&rows, "subject_ref", "signal"), want);
@@ -238,7 +254,12 @@ fn the_actor_link_digest_equals_the_captured_reply() {
     assert_eq!(want.len(), 2);
     let rows = events(&c, false);
     assert_eq!(
-        fold_placed(&rows, &["actor_ref"], &TARGET, true),
+        fold_placed(
+            &rows,
+            Side::Entity(&["actor_ref"]),
+            Side::Entity(&TARGET),
+            true
+        ),
         Ok(want.clone())
     );
     assert_eq!(fold_columns(&rows, "actor_ref", "target_ref"), want);
@@ -249,7 +270,7 @@ fn the_actor_link_digest_equals_the_captured_reply() {
 fn the_foreign_tenant_row_is_fenced_by_the_filter() {
     let c = capture();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
-    let open = fold_placed(&events(&c, false), &SUBJECT, &["signal"], false).unwrap();
+    let open = fold_placed(&events(&c, false), SUBJECT_KEY, SIGNAL, false).unwrap();
     assert_ne!(open, want);
     assert_eq!(
         open.iter().map(|g| g.rows).sum::<usize>(),
@@ -262,7 +283,7 @@ fn a_changed_signal_changes_the_digest() {
     let c = capture();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
     assert_ne!(
-        fold_placed(&events(&c, true), &SUBJECT, &["signal"], true),
+        fold_placed(&events(&c, true), SUBJECT_KEY, SIGNAL, true),
         Ok(want)
     );
 }
@@ -273,7 +294,7 @@ fn the_first_column_a_row_holds_names_its_group() {
     let c = capture();
     let mut rows = events(&c, false);
     rows[0].insert("policy_ref".into(), "synthetic-policy-01".into());
-    let by = |hi: &[&str]| fold_placed(&rows, hi, &["signal"], true).unwrap();
+    let by = |hi: &[&str]| fold_placed(&rows, Side::Entity(hi), SIGNAL, true).unwrap();
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
     assert_eq!(by(&SUBJECT), want);
     assert_ne!(by(&["policy_ref", "account_ref", "resource_ref"]), want);
@@ -287,9 +308,19 @@ fn a_counted_row_without_a_position_is_refused() {
     let foreign = rows.len() - 1;
     rows[foreign].insert("account_ref".into(), "k02-actor".into());
     let want = captured(&c, "signal_summary", "subject_ref", "signal");
-    assert_eq!(fold_placed(&rows, &SUBJECT, &["signal"], true), Ok(want));
+    assert_eq!(fold_placed(&rows, SUBJECT_KEY, SIGNAL, true), Ok(want));
     assert_eq!(
-        fold_placed(&rows, &SUBJECT, &["signal"], false),
+        fold_placed(&rows, SUBJECT_KEY, SIGNAL, false),
         Err(Refusal::Unplaced("k02-actor".to_string()))
     );
+}
+
+/// A signal is a property: with the signal side asked as an entity, the tile holds no
+/// position for it and the fold is refused instead of answered.
+#[test]
+fn a_property_asked_as_an_entity_is_refused() {
+    let c = capture();
+    let rows = events(&c, false);
+    let refused = fold_placed(&rows, SUBJECT_KEY, Side::Entity(&["signal"]), true);
+    assert!(matches!(refused, Err(Refusal::Unplaced(_))), "{refused:?}");
 }
