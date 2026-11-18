@@ -34,6 +34,23 @@ next to the open-source one on 2026-11-18, both in local mode with no licence ke
   frequencies were the same in three runs; timings were not, so they are left out. It analysed 100
   of the 300 rows.
 
+- **Log pattern rules:** `o2_patterns.py` ingests five message shapes with fixed counts (120, 80,
+  60, 34, 6) and 14 one-rule probes, each into a fresh stream, and asks for patterns over the exact
+  ingest window with `size` 5000. Then the answer covers every row: three captures were
+  byte-identical. With the default window and size the binary samples and the row count changes from
+  run to run (the capture above saw 100 of 300). `enterprise-v1.1.2-pattern-shapes.json` is that
+  capture. Left out because they are not stable: timings, `z_score` (last digit), and the order of
+  patterns with equal frequency. Controls: one shape alone gives one template; the 6-row shape gives
+  none.
+- **Fork side:** `src/log_patterns` answers the same messages and is tested against that file. It
+  matches the five shapes, both controls and 9 of the 14 probes. The 5 it does not match yet are
+  named in `src/log_patterns/tests/oracle.rs`: runs of adjacent variable tokens, and the kinds
+  `<:UUID>`, `<:TIMESTAMP>`, `<:IDENTIFIERS>`. It is not wired to the route yet.
+
+```bash
+python3 tests/parity/o2_patterns.py --url http://127.0.0.1:5091 --user <root email> --password <root password> --out shapes.json
+```
+
 ```bash
 python3 tests/parity/o2_ee_surface.py --router src/api/http/src/handler/http/router/mod.rs --a http://127.0.0.1:5081 --b http://127.0.0.1:5091 --user <root email> --password <root password> --out surface.json
 ```
