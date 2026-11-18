@@ -1,0 +1,143 @@
+{
+ "actor_link": {
+  "end_time": 1794863435210838,
+  "hits": [
+   {
+    "actor_ref": "synthetic-actor-01",
+    "customer_code": "LAB",
+    "event_refs": [
+     "exchange-rule-change-03"
+    ],
+    "events": 1,
+    "first_us": 1794863315210838,
+    "last_us": 1794863315210838,
+    "target_ref": "synthetic-mailbox-01",
+    "tenant_alias": "lab-1"
+   },
+   {
+    "actor_ref": "synthetic-actor-01",
+    "customer_code": "LAB",
+    "event_refs": [
+     "ca-policy-review-04"
+    ],
+    "events": 1,
+    "first_us": 1794863375210838,
+    "last_us": 1794863375210838,
+    "target_ref": "synthetic-policy-01",
+    "tenant_alias": "lab-1"
+   }
+  ],
+  "is_partial": false,
+  "sql": "SELECT customer_code, tenant_alias, actor_ref, COALESCE(resource_ref, policy_ref) AS target_ref, COUNT(*) AS events, MIN(_timestamp) AS first_us, MAX(_timestamp) AS last_us, array_agg(event_id) AS event_refs FROM \"sentinel_poc\" WHERE customer_code = 'LAB' AND tenant_alias = 'lab-1' AND actor_ref IS NOT NULL AND COALESCE(resource_ref, policy_ref) IS NOT NULL GROUP BY customer_code, tenant_alias, actor_ref, COALESCE(resource_ref, policy_ref)",
+  "start_time": 1794863135210838
+ },
+ "events": [
+  {
+   "account_ref": "synthetic-actor-01",
+   "action_state": "none",
+   "customer_code": "LAB",
+   "event_id": "entra-signin-fail-01",
+   "evidence_grade": "fixture",
+   "failed_attempts": 14,
+   "proposal_template": "security-incident-v0",
+   "result": "failure",
+   "signal": "signin_failure_burst",
+   "source_system": "entra_synthetic",
+   "tenant_alias": "lab-1"
+  },
+  {
+   "account_ref": "synthetic-actor-01",
+   "action_state": "none",
+   "customer_code": "LAB",
+   "event_id": "entra-signin-success-02",
+   "evidence_grade": "fixture",
+   "proposal_template": "security-incident-v0",
+   "result": "success",
+   "signal": "signin_success_after_failures",
+   "source_system": "entra_synthetic",
+   "tenant_alias": "lab-1"
+  },
+  {
+   "action_state": "none",
+   "actor_ref": "synthetic-actor-01",
+   "customer_code": "LAB",
+   "event_id": "exchange-rule-change-03",
+   "evidence_grade": "fixture",
+   "proposal_template": "configuration-issue-v0",
+   "resource_ref": "synthetic-mailbox-01",
+   "signal": "mailbox_forwarding_rule_created",
+   "source_system": "exchange_synthetic",
+   "tenant_alias": "lab-1"
+  },
+  {
+   "action_state": "proposed",
+   "actor_ref": "synthetic-actor-01",
+   "customer_code": "LAB",
+   "event_id": "ca-policy-review-04",
+   "evidence_grade": "fixture",
+   "policy_ref": "synthetic-policy-01",
+   "proposal_template": "controlled-change-v0",
+   "signal": "conditional_access_change_candidate",
+   "source_system": "entra_synthetic",
+   "tenant_alias": "lab-1"
+  }
+ ],
+ "signal_summary": {
+  "end_time": 1794863435210838,
+  "hits": [
+   {
+    "customer_code": "LAB",
+    "event_refs": [
+     "entra-signin-success-02"
+    ],
+    "events": 1,
+    "first_us": 1794863255210838,
+    "last_us": 1794863255210838,
+    "signal": "signin_success_after_failures",
+    "subject_ref": "synthetic-actor-01",
+    "tenant_alias": "lab-1"
+   },
+   {
+    "customer_code": "LAB",
+    "event_refs": [
+     "entra-signin-fail-01",
+     "entra-signin-fail-05"
+    ],
+    "events": 2,
+    "first_us": 1794863195210838,
+    "last_us": 1794863405210838,
+    "signal": "signin_failure_burst",
+    "subject_ref": "synthetic-actor-01",
+    "tenant_alias": "lab-1"
+   },
+   {
+    "customer_code": "LAB",
+    "event_refs": [
+     "ca-policy-review-04"
+    ],
+    "events": 1,
+    "first_us": 1794863375210838,
+    "last_us": 1794863375210838,
+    "signal": "conditional_access_change_candidate",
+    "subject_ref": "synthetic-policy-01",
+    "tenant_alias": "lab-1"
+   },
+   {
+    "customer_code": "LAB",
+    "event_refs": [
+     "exchange-rule-change-03"
+    ],
+    "events": 1,
+    "first_us": 1794863315210838,
+    "last_us": 1794863315210838,
+    "signal": "mailbox_forwarding_rule_created",
+    "subject_ref": "synthetic-mailbox-01",
+    "tenant_alias": "lab-1"
+   }
+  ],
+  "is_partial": false,
+  "sql": "SELECT customer_code, tenant_alias, COALESCE(account_ref, resource_ref, policy_ref) AS subject_ref, signal, COUNT(*) AS events, MIN(_timestamp) AS first_us, MAX(_timestamp) AS last_us, array_agg(event_id) AS event_refs FROM \"sentinel_poc\" WHERE customer_code = 'LAB' AND tenant_alias = 'lab-1' AND COALESCE(account_ref, resource_ref, policy_ref) IS NOT NULL GROUP BY customer_code, tenant_alias, COALESCE(account_ref, resource_ref, policy_ref), signal",
+  "start_time": 1794863135210838
+ },
+ "source": "sentinel-rs c04c772: poc/openobserve-hec/fixtures/m365-synthetic.ndjson and poc/openobserve-live/captured/digest-*.reply.json (OpenObserve v0.14.7, synthetic events)"
+}
