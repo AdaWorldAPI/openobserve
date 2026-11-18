@@ -19,6 +19,13 @@
     "list"
    ]
   },
+  "/api/default/annotation_queues/items": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
   "/api/default/anomaly_detection": {
    "a": 404,
    "b": 200,
@@ -60,6 +67,40 @@
     "truncated"
    ]
   },
+  "/api/default/db_monitoring/deadlocks": {
+   "a": 403,
+   "b": 200,
+   "b_shape": [
+    "freshness",
+    "hits",
+    "innodb_print_all_deadlocks",
+    "last_seen_before",
+    "log_lines_seen",
+    "not_collecting",
+    "query_shapes",
+    "stream",
+    "total",
+    "truncated"
+   ]
+  },
+  "/api/default/db_monitoring/table_health": {
+   "a": 403,
+   "b": 200,
+   "b_shape": [
+    "counters_are_cumulative",
+    "engine_coverage",
+    "hits",
+    "stream",
+    "total",
+    "truncated",
+    "tuples_are_estimated"
+   ]
+  },
+  "/api/default/discovery": {
+   "a": 404,
+   "b": 400,
+   "b_shape": "text"
+  },
   "/api/default/domain_management": {
    "a": 404,
    "b": 403,
@@ -73,6 +114,34 @@
    "b": 200,
    "b_shape": [
     "list"
+   ]
+  },
+  "/api/default/experiments": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "list"
+   ]
+  },
+  "/api/default/experiments/compare": {
+   "a": 404,
+   "b": 400,
+   "b_shape": "text"
+  },
+  "/api/default/gen_ai/agents": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "agents",
+    "total"
+   ]
+  },
+  "/api/default/groups": {
+   "a": 403,
+   "b": 500,
+   "b_shape": [
+    "code",
+    "message"
    ]
   },
   "/api/default/password_complexity": {
@@ -105,6 +174,14 @@
    "b": 400,
    "b_shape": "text"
   },
+  "/api/default/prompts/settings": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "protectedLabels",
+    "webhook"
+   ]
+  },
   "/api/default/providers": {
    "a": 404,
    "b": 200,
@@ -126,6 +203,11 @@
     "code",
     "message"
    ]
+  },
+  "/api/default/ratelimit/module_list": {
+   "a": 404,
+   "b": 400,
+   "b_shape": "text"
   },
   "/api/default/ratelimit/role_list": {
    "a": 404,
@@ -206,6 +288,15 @@
     "total_dimensions"
    ]
   },
+  "/api/default/service_streams/config/identity": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "service_optional",
+    "sets",
+    "tracked_alias_ids"
+   ]
+  },
   "/api/default/settings/gen_ai/agent_mapping": {
    "a": 404,
    "b": 200,
@@ -224,6 +315,16 @@
     "message"
    ]
   },
+  "/api/default/storage": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "created_at",
+    "data",
+    "provider",
+    "updated_at"
+   ]
+  },
   "/api/default/tasks": {
    "a": 404,
    "b": 200,
@@ -231,11 +332,27 @@
     "list"
    ]
   },
+  "/api/default/traces/agent_signals": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "signals"
+   ]
+  },
   "/api/default/traces/service_graph/edge/history": {
    "a": 404,
    "b": 200,
    "b_shape": [
     "data_points"
+   ]
+  },
+  "/api/default/traces/service_graph/topology/current": {
+   "a": 404,
+   "b": 200,
+   "b_shape": [
+    "edges",
+    "meta",
+    "nodes"
    ]
   },
   "/api/default/users/roles/all": {
@@ -261,6 +378,19 @@
     "installation_id",
     "key",
     "license"
+   ]
+  },
+  "/api/v2/default/alerts/incidents/stats": {
+   "a": 403,
+   "b": 200,
+   "b_shape": [
+    "acknowledged_incidents",
+    "alerts_per_incident_avg",
+    "by_service",
+    "by_severity",
+    "open_incidents",
+    "resolved_incidents",
+    "total_incidents"
    ]
   }
  }

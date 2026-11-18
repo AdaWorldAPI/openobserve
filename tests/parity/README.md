@@ -25,9 +25,10 @@ next to the open-source one on 2026-11-18, both in local mode with no licence ke
 
 - **Shared surface:** the capture above is identical on both editions (23 same, 0 differ).
 - **Routes:** `o2_ee_surface.py` probes every parameter-free GET route of the fork's router on two
-  instances and records where the status differs. `enterprise-v1.1.2-surface.json` holds the 35 routes
+  instances and records where the status differs. `enterprise-v1.1.2-surface.json` holds the 50 routes
   that differ, with the status on each side and the top-level keys of the enterprise answer, never a
-  body. Control: the open-source binary against itself gives 0.
+  body. Controls: the open-source binary against itself gives 0, and an unreachable instance ends
+  the run with an error. A route that holds the connection open is recorded as `timeout`.
 - **Log patterns:** `enterprise-v1.1.2-log-patterns.json` is what
   `POST /api/default/streams/parity_logs/patterns/extract` returned for the fixture. Templates and
   frequencies were the same in three runs; timings were not, so they are left out. It analysed 100

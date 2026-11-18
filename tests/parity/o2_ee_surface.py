@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
-# Probes every parameter-free GET route of the router on two running instances and records
-# where they differ. Usage:
-#   o2_ee_surface.py --router <router/mod.rs> --a <url> --b <url> --user U --password P --out F
-import argparse, base64, json, re, sys, urllib.error, urllib.request
+import argparse, base64, json, re, socket, sys, urllib.error, urllib.request
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+def call_args(src, start):
+    depth, at = 1, start
+    while depth and at < len(src):
+        depth += {"(": 1, ")": -1}.get(src[at], 0)
+        at += 1
+    return src[start : at - 1]
+
+
 def routes(router_src):
     found = set()
-    pattern = r'\.route\(\s*"([^"]+)"\s*,\s*((?:[^()]|\([^()]*\))*?)\)\s*[\n.]'
-    for m in re.finditer(pattern, router_src):
-        params = set(re.findall(r"[{:](\w+)\}?", m.group(1)))
-        if re.search(r"\bget\(", m.group(2)) and params <= {"org_id"}:
-            found.add(re.sub(r"\{org_id\}|:org_id", "default", m.group(1)))
+    for m in re.finditer(r"\.route\(", router_src):
+        args = call_args(router_src, m.end())
+        path = re.match(r'\s*"([^"]+)"\s*,', args)
+        if not path:
+            continue
+        params = set(re.findall(r"[{:](\w+)\}?", path.group(1)))
+        if re.search(r"\bget\(", args[path.end() :]) and params <= {"org_id"}:
+            found.add(re.sub(r"\{org_id\}|:org_id", "default", path.group(1)))
     return sorted(found)
 
 
@@ -24,8 +32,12 @@ def get(base, path, auth):
             return resp.status, resp.read()
     except urllib.error.HTTPError as err:
         return err.code, err.read()
-    except OSError:
-        return 0, b""
+    except (TimeoutError, socket.timeout):
+        # A route that holds the connection open (a stream) is an answer of its own kind.
+        return "timeout", b""
+    except OSError as err:
+        # An unreachable instance is not an answer: two of them would compare as equal.
+        sys.exit(f"{base}{path}: {err}")
 
 
 def shape(body):
