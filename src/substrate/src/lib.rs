@@ -20,9 +20,11 @@ pub use lance_graph_dt64::dr::Scope;
 use lance_graph_dt64::{
     BindStore, ClassSchema, Extent, LaneRequest, LaneSource, RouteAt, dr::Frame,
 };
-use lance_graph_mask_risc::{LaneRef, Planes, Scratch, Value, execute};
+use lance_graph_mask_risc::{Foreign, LaneRef, Out, Planes, Scratch, Value, execute, execute_into};
 pub use lance_graph_quack::Filter;
-use lance_graph_quack::{Agg, Cmp, Col, Mask, Query, lower};
+use lance_graph_quack::{
+    Agg, Cmp, Col, GroupAddr, GroupAgg, Mask, Query, lower, normalize_group_sink,
+};
 pub use source::{STREAM_REV, StreamSource, StreamView};
 
 use crate::source::Values;
@@ -217,6 +219,62 @@ impl Reader<'_> {
         Ok(buckets)
     }
 
+    /// `GROUP BY hi, lo` over the rows of `filter` that hold both keys and a time: rows, first
+    /// and last event time per group, in code order. Three folds; no row is built.
+    pub fn group_by_pair(
+        &self,
+        filter: Filter,
+        hi: &str,
+        lo: &str,
+    ) -> Result<Vec<PairGroup>, Refusal> {
+        let (hi_col, lo_col, time) = (self.text(hi)?, self.text(lo)?, self.time()?);
+        let codes = |column: &str| -> Result<usize, Refusal> {
+            let at = self.position(column)?;
+            Ok(self.source.field(at).values.text_codes().unwrap_or(0))
+        };
+        let (hi_codes, stride) = (codes(hi)?, codes(lo)?);
+        let groups = hi_codes * stride;
+        if groups == 0 {
+            return Ok(Vec::new());
+        }
+        let key = GroupAddr::Pair {
+            hi: hi_col,
+            lo: lo_col,
+            stride: stride as u32,
+        };
+        let keyed = [hi_col, lo_col, time]
+            .into_iter()
+            .fold(filter, |f, col| self.present(f, col));
+        let fold = |agg: GroupAgg| -> Result<Vec<i64>, Refusal> {
+            let mut sink = vec![0i64; groups];
+            self.run_groups(keyed.clone(), key, agg, &mut sink)?;
+            normalize_group_sink(agg.fold(), &mut sink);
+            Ok(sink)
+        };
+        let rows = fold(GroupAgg::Count)?;
+        let first = fold(GroupAgg::MinI32(time))?;
+        let last = fold(GroupAgg::MaxI32(time))?;
+        let base_us = self.source.base_us().unwrap_or(0);
+        let name = |column: &str, code: usize| {
+            self.source
+                .text(&self.frame, column, code as u32)
+                .map(str::to_string)
+                .ok_or_else(|| Refusal::Answer(format!("{column} code {code} unmapped")))
+        };
+        (0..groups)
+            .filter(|g| rows[*g] != 0)
+            .map(|g| {
+                Ok(PairGroup {
+                    hi: name(hi, g / stride)?,
+                    lo: name(lo, g % stride)?,
+                    rows: rows[g] as usize,
+                    first_us: base_us + first[g] * US_PER_MS,
+                    last_us: base_us + last[g] * US_PER_MS,
+                })
+            })
+            .collect()
+    }
+
     fn present(&self, filter: Filter, col: Col) -> Filter {
         Filter::and([filter, Filter::is_not_null(Mask(col.0 + 1))])
     }
@@ -241,6 +299,37 @@ impl Reader<'_> {
         let mut scratch =
             Scratch::for_program(&program, rows).map_err(|e| Refusal::Run(format!("{e:?}")))?;
         execute(&program, &planes, &mut scratch, None).map_err(|e| Refusal::Run(format!("{e:?}")))
+    }
+
+    fn run_groups(
+        &self,
+        filter: Filter,
+        key: GroupAddr,
+        agg: GroupAgg,
+        sink: &mut [i64],
+    ) -> Result<(), Refusal> {
+        let query = Query {
+            filter: filter.sql_where(&self.nullable),
+            agg: Agg::GroupReduce { key, agg },
+        };
+        let program = lower(&query).map_err(|e| Refusal::Lower(format!("{e:?}")))?;
+        let rows = self.source.rows();
+        let planes = Planes {
+            n_rows: rows,
+            masks: &self.masks,
+            lanes: &self.lanes,
+        };
+        let mut scratch =
+            Scratch::for_program(&program, rows).map_err(|e| Refusal::Run(format!("{e:?}")))?;
+        execute_into(
+            &program,
+            &planes,
+            &Foreign::NONE,
+            &mut scratch,
+            Out::I64(sink),
+        )
+        .map(|_| ())
+        .map_err(|e| Refusal::Run(format!("{e:?}")))
     }
 
     fn position(&self, column: &str) -> Result<usize, Refusal> {
@@ -274,6 +363,16 @@ impl Reader<'_> {
             _ => Err(Refusal::Kind(TIMESTAMP.to_string())),
         }
     }
+}
+
+/// One group of [`Reader::group_by_pair`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PairGroup {
+    pub hi: String,
+    pub lo: String,
+    pub rows: usize,
+    pub first_us: i64,
+    pub last_us: i64,
 }
 
 /// Why a batch or a question has no answer on lanes.
