@@ -25,7 +25,7 @@ use lance_graph_dt64::{
 use lance_graph_mask_risc::{Foreign, LaneRef, Out, Planes, Scratch, Value, execute, execute_into};
 pub use lance_graph_quack::Filter;
 use lance_graph_quack::{
-    Agg, Cmp, Col, ForeignLane, GroupAddr, GroupAgg, Mask, Query, lower, normalize_group_sink,
+    Agg, Cmp, Col, GroupAddr, GroupAgg, Mask, Query, lower, normalize_group_sink,
 };
 pub use source::{STREAM_REV, StreamSource, StreamView};
 
@@ -249,7 +249,7 @@ impl Reader<'_> {
             .fold(filter, |f, col| self.present(f, col));
         let fold = |agg: GroupAgg| -> Result<Vec<i64>, Refusal> {
             let mut sink = vec![0i64; groups];
-            self.run_groups(keyed.clone(), key, agg, &Foreign::NONE, &mut sink)?;
+            self.run_groups(keyed.clone(), key, agg, &mut sink)?;
             normalize_group_sink(agg.fold(), &mut sink);
             Ok(sink)
         };
@@ -278,8 +278,8 @@ impl Reader<'_> {
     }
 
     /// `GROUP BY COALESCE(hi…), COALESCE(lo…)`: each key is the first of its text columns a
-    /// row holds. The columns are never merged into a lane: a position map per column sends
-    /// its codes to one shared coordinate, read inside the fold.
+    /// row holds. Rows are folded by their own codes, one fused pair fold per column pair;
+    /// the position maps then relabel the groups, never the rows.
     pub fn group_by_first_of(
         &self,
         filter: Filter,
@@ -287,27 +287,25 @@ impl Reader<'_> {
         lo: &[&str],
     ) -> Result<Vec<PairGroup>, Refusal> {
         let (hi, lo, time) = (self.side(hi)?, self.side(lo)?, self.time()?);
-        let (n_hi, n_lo) = (hi.names.len(), lo.names.len());
-        let maps: Vec<LaneRef<'_>> = hi.maps.iter().map(|m| LaneRef::U32(m)).collect();
-        let foreign = Foreign {
-            planes: &[],
-            lanes: &maps,
-        };
-        let mut cells = vec![Cell::EMPTY; n_hi * n_lo];
+        let n_lo = lo.names.len();
+        let mut cells = vec![Cell::EMPTY; hi.names.len() * n_lo];
         let timed = self.present(filter, time);
-        for (kl, lo_map) in lo.maps.iter().enumerate() {
-            for (code, at_lo) in lo_map.iter().enumerate() {
-                let row = Filter::and([
-                    timed.clone(),
-                    lo.only(kl),
-                    Filter::cmp(lo.cols[kl], Cmp::EqU32(code as u32)),
-                ]);
-                for kh in 0..hi.cols.len() {
-                    let keyed = Filter::and([row.clone(), hi.only(kh)]);
-                    let column = self.fold_via(keyed, hi.cols[kh], kh, time, &foreign, n_hi)?;
-                    for (at_hi, cell) in column.into_iter().enumerate() {
-                        cells[at_hi * n_lo + *at_lo as usize].merge(cell);
-                    }
+        for (kh, hi_map) in hi.maps.iter().enumerate() {
+            for (kl, lo_map) in lo.maps.iter().enumerate() {
+                let stride = lo_map.len();
+                if hi_map.is_empty() || stride == 0 {
+                    continue;
+                }
+                let key = GroupAddr::Pair {
+                    hi: hi.cols[kh],
+                    lo: lo.cols[kl],
+                    stride: stride as u32,
+                };
+                let keyed = Filter::and([timed.clone(), hi.only(kh), lo.only(kl)]);
+                let folded = self.fold_pair(keyed, key, time, hi_map.len() * stride)?;
+                for (g, cell) in folded.into_iter().enumerate() {
+                    let at = hi_map[g / stride] as usize * n_lo + lo_map[g % stride] as usize;
+                    cells[at].merge(cell);
                 }
             }
         }
@@ -326,36 +324,30 @@ impl Reader<'_> {
             .collect())
     }
 
-    /// Rows, first and last time per shared position of `fk`, read through map `map`.
-    fn fold_via(
+    /// Rows, first and last time per group of `key`: three programs.
+    fn fold_pair(
         &self,
         filter: Filter,
-        fk: Col,
-        map: usize,
+        key: GroupAddr,
         time: Col,
-        foreign: &Foreign<'_>,
-        positions: usize,
+        groups: usize,
     ) -> Result<Vec<Cell>, Refusal> {
-        let key = GroupAddr::Via {
-            fk,
-            key: ForeignLane(map as u16),
-        };
         let fold = |agg: GroupAgg| -> Result<Vec<i64>, Refusal> {
-            let mut sink = vec![0i64; positions];
-            self.run_groups(filter.clone(), key, agg, foreign, &mut sink)?;
+            let mut sink = vec![0i64; groups];
+            self.run_groups(filter.clone(), key, agg, &mut sink)?;
             normalize_group_sink(agg.fold(), &mut sink);
             Ok(sink)
         };
         let rows = fold(GroupAgg::Count)?;
         let first = fold(GroupAgg::MinI32(time))?;
         let last = fold(GroupAgg::MaxI32(time))?;
-        Ok((0..positions)
-            .map(|p| match rows[p] {
+        Ok((0..groups)
+            .map(|g| match rows[g] {
                 0 => Cell::EMPTY,
                 n => Cell {
                     rows: n,
-                    first: first[p],
-                    last: last[p],
+                    first: first[g],
+                    last: last[g],
                 },
             })
             .collect())
@@ -418,7 +410,6 @@ impl Reader<'_> {
         filter: Filter,
         key: GroupAddr,
         agg: GroupAgg,
-        foreign: &Foreign<'_>,
         sink: &mut [i64],
     ) -> Result<(), Refusal> {
         let query = Query {
@@ -434,9 +425,15 @@ impl Reader<'_> {
         };
         let mut scratch =
             Scratch::for_program(&program, rows).map_err(|e| Refusal::Run(format!("{e:?}")))?;
-        execute_into(&program, &planes, foreign, &mut scratch, Out::I64(sink))
-            .map(|_| ())
-            .map_err(|e| Refusal::Run(format!("{e:?}")))
+        execute_into(
+            &program,
+            &planes,
+            &Foreign::NONE,
+            &mut scratch,
+            Out::I64(sink),
+        )
+        .map(|_| ())
+        .map_err(|e| Refusal::Run(format!("{e:?}")))
     }
 
     fn position(&self, column: &str) -> Result<usize, Refusal> {
